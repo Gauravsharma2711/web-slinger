@@ -1,0 +1,37 @@
+{
+  "name": "@web-slinger/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ --max-warnings 0",
+    "test": "vitest run",
+    "test:smoke": "tsx src/services/smokeTest.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^9.0.0",
+    "@google/genai": "^2.18.0",
+    "@web-slinger/shared": "workspace:*",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.4",
+    "@types/supertest": "^6.0.2",
+    "eslint": "^9.21.0",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.26.0",
+    "vitest": "^3.0.8"
+  }
+}

@@ -1,3 +1,60 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+
+# Build output and caches
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Environment variables and local secrets
 .env
 .env.*
 !.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local Google Cloud / service-account credentials
+service-account*.json
+*service-account*.json
+credentials*.json
+*credentials*.json
+*.pem
+*.key
+
+# Firebase local artifacts
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Test and browser artifacts
+playwright-report/
+test-results/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+.cache/
