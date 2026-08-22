@@ -23,7 +23,9 @@ export function toFirestoreSessionDocument(session: SessionDocument): Record<str
     updated_at: session.updated_at,
     expires_at: session.expires_at,
     current_job_id: session.current_job_id ?? null,
+    snapshot_id: session.snapshot_id ?? null,
     research_results: session.research_results ?? null,
+    discovered_issues: session.discovered_issues ?? null,
     health: session.health ?? null,
   };
 
@@ -48,7 +50,9 @@ export function fromFirestoreSessionDocument(data: Record<string, unknown>): Ses
     updated_at: data.updated_at as string,
     expires_at: data.expires_at as string,
     current_job_id: (data.current_job_id as string | undefined) ?? undefined,
+    snapshot_id: (data.snapshot_id as string | undefined) ?? undefined,
     research_results: (data.research_results as SessionDocument['research_results']) ?? undefined,
+    discovered_issues: (data.discovered_issues as SessionDocument['discovered_issues']) ?? undefined,
     health: (data.health as SessionDocument['health']) ?? undefined,
   };
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CompactHealthRecordSchema } from './health.js';
 import { JobStatusSchema, JobTypeSchema, NormalizedJobResultSchema } from './job.js';
+import { NormalizedIssueSchema } from './issue.js';
 
 export const SessionStageSchema = z.enum([
   'created',
@@ -52,6 +53,7 @@ export const SessionDocumentSchema = z.object({
   current_job_id: z.string().uuid().optional(),
   snapshot_id: z.string().nullable().optional(),
   research_results: z.array(NormalizedJobResultSchema).optional(),
+  discovered_issues: z.array(NormalizedIssueSchema).optional(),
   health: CompactHealthRecordSchema.optional(),
 });
 
@@ -76,6 +78,7 @@ export const SessionStatusResponseSchema = z.object({
   snapshot_id: z.string().nullable().optional(),
   message: z.string().optional(),
   research_results: z.array(NormalizedJobResultSchema).optional(),
+  discovered_issues: z.array(NormalizedIssueSchema).optional(),
   health: CompactHealthRecordSchema.optional(),
 });
 

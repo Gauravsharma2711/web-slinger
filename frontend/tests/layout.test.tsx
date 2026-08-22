@@ -1,17 +1,20 @@
 /* Calm Proof Flow: one shared content rail, generous whitespace, no sidebar, evidence-first. */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { AppShell } from '../src/components/AppShell.js';
 import { EntryCanvas } from '../src/components/EntryCanvas.js';
 import { ResearchCanvas } from '../src/components/ResearchCanvas.js';
-import { SessionDocument, SessionStatusResponse } from '@web-slinger/shared';
+import { IssuesCanvas } from '../src/components/IssuesCanvas.js';
+import { ContextBriefCanvas } from '../src/components/ContextBriefCanvas.js';
+import { SessionDocument, SessionStatusResponse, NormalizedIssue } from '@web-slinger/shared';
 
 describe('Global AppShell & Content Rail Alignment & Overflow Safety', () => {
   const breakpoints = [1920, 1280, 768, 375];
 
   beforeEach(() => {
     sessionStorage.clear();
+    vi.restoreAllMocks();
   });
 
   afterEach(() => {
@@ -131,6 +134,160 @@ describe('Global AppShell & Content Rail Alignment & Overflow Safety', () => {
         expect(contentRail?.contains(resultItems[0])).toBe(true);
 
         // Verify scroll width constraint
+        expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+          document.documentElement.clientWidth
+        );
+      });
+
+      it('renders IssuesCanvas view within shared content rail and ensures no horizontal overflow', async () => {
+        const mockSession: SessionDocument = {
+          session_id: 'test-session-12345678',
+          stack: ['TypeScript', 'React'],
+          normalized_stack: ['typescript', 'react'],
+          goal: null,
+          stage: 'researching',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 86400000).toISOString(),
+        };
+
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            session_id: mockSession.session_id,
+            owner: 'facebook',
+            repo: 'react',
+            status: 'completed',
+            message: 'Found issues',
+            issues: [
+              {
+                id: 101,
+                number: 101,
+                title: 'Test issue for layout check',
+                body: 'Detailed description for test layout issue checking responsiveness.',
+                html_url: 'https://github.com/facebook/react/issues/101',
+                state: 'open',
+                labels: ['help wanted'],
+                assignees: [],
+                author: 'dev1',
+                comments_count: 1,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                source_url: 'https://github.com/facebook/react/issues/101',
+                retrieved_at: new Date().toISOString(),
+                tier: 'A',
+                score: 95,
+                reasons: ['Matched onboarding label: "help wanted"'],
+                is_fixture: false,
+              },
+            ],
+            total_count: 1,
+            cached: false,
+            is_fixture: false,
+          }),
+        } as Response);
+
+        const { container } = render(
+          <AppShell stage="CANDIDATE ISSUES">
+            <IssuesCanvas
+              session={mockSession}
+              onBackToOpportunities={() => {}}
+              onReset={() => {}}
+            />
+          </AppShell>
+        );
+
+        const headerInner = container.querySelector('.ws-header-inner');
+        const contentRail = container.querySelector('.ws-content-rail');
+
+        expect(headerInner).toBeInTheDocument();
+        expect(contentRail).toBeInTheDocument();
+
+        // Verify root overflow safety
+        expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+          document.documentElement.clientWidth
+        );
+      });
+
+      it('renders ContextBriefCanvas view within shared content rail and ensures no horizontal overflow', () => {
+        const mockSession: SessionDocument = {
+          session_id: 'test-session-12345678',
+          stack: ['TypeScript', 'React'],
+          normalized_stack: ['typescript', 'react'],
+          goal: 'Build dev tools',
+          stage: 'issue_selected',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 86400000).toISOString(),
+        };
+
+        const mockIssue: NormalizedIssue = {
+          id: 101,
+          number: 101,
+          title: 'Test issue for layout check',
+          body: 'Detailed description for test layout issue checking responsiveness.',
+          html_url: 'https://github.com/facebook/react/issues/101',
+          author: 'dev1',
+          assignees: [],
+          state: 'open',
+          labels: ['help wanted'],
+          comments_count: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          source_url: 'https://github.com/facebook/react/issues/101',
+          retrieved_at: new Date().toISOString(),
+          tier: 'A',
+          score: 95,
+          reasons: ['Matched onboarding label'],
+          is_fixture: false,
+        };
+
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            session_id: 'test-session-12345678',
+            issue_number: 101,
+            status: 'completed',
+            brief: {
+              summary: 'Test summary for layout checking across breakpoints.',
+              likelyContributionShape: 'Markdown documentation in /docs.',
+              whatToReadFirst: [
+                { instruction: 'Read guidelines', sourceUrl: 'https://github.com/facebook/react' },
+              ],
+              unknownsToVerify: ['Verification item 1'],
+              suggestedFirstQuestion: 'How to proceed?',
+              sourceCitations: [
+                { claim: 'Test claim', sourceUrl: 'https://github.com/facebook/react' },
+              ],
+            },
+            sources: [
+              { title: 'Repo', url: 'https://github.com/facebook/react', retrievedAt: new Date().toISOString() },
+            ],
+            model_id: 'gemini-3.7-flash',
+            generated_at: new Date().toISOString(),
+            validation_errors: [],
+            is_fixture: false,
+          }),
+        } as Response);
+
+        const { container } = render(
+          <AppShell stage="CONTEXT BRIEF">
+            <ContextBriefCanvas
+              session={mockSession}
+              issue={mockIssue}
+              onBackToIssues={() => {}}
+              onReset={() => {}}
+            />
+          </AppShell>
+        );
+
+        const headerInner = container.querySelector('.ws-header-inner');
+        const contentRail = container.querySelector('.ws-content-rail');
+
+        expect(headerInner).toBeInTheDocument();
+        expect(contentRail).toBeInTheDocument();
+
+        // Verify root overflow safety
         expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
           document.documentElement.clientWidth
         );

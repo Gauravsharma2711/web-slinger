@@ -5,6 +5,8 @@ import {
   SessionDocument,
   SessionStatusResponse,
   ResearchJobResponse,
+  GetSessionIssuesResponse,
+  ContextBriefResponse,
 } from '@web-slinger/shared';
 import {
   SessionRepository,
@@ -20,6 +22,18 @@ import {
   ResearchAdapter,
   createDefaultResearchAdapter,
 } from '../services/researchAdapter.js';
+import {
+  GitHubIssuesClient,
+  createDefaultGitHubIssuesClient,
+} from '../services/githubIssuesClient.js';
+import {
+  SourcePackBuilder,
+  createDefaultSourcePackBuilder,
+} from '../services/sourcePackBuilder.js';
+import {
+  ContextBriefService,
+  createDefaultContextBriefService,
+} from '../services/contextBriefService.js';
 
 // Bounded runner timeout suitable for real Scraper Studio collections (5+ minutes)
 const RESEARCH_RUNNER_TIMEOUT_MS = 320000;
@@ -43,7 +57,10 @@ async function executeWithTimeout<T>(
 export function createSessionRouter(
   sessionRepository: SessionRepository = createDefaultSessionRepository(),
   jobRepository: JobRepository = createDefaultJobRepository(),
-  researchAdapter: ResearchAdapter = createDefaultResearchAdapter()
+  researchAdapter: ResearchAdapter = createDefaultResearchAdapter(),
+  gitHubIssuesClient: GitHubIssuesClient = createDefaultGitHubIssuesClient(),
+  sourcePackBuilder: SourcePackBuilder = createDefaultSourcePackBuilder(),
+  contextBriefService: ContextBriefService = createDefaultContextBriefService()
 ): Router {
   const router = Router();
 
@@ -323,10 +340,310 @@ export function createSessionRouter(
             latestJob && (latestJob.status === 'completed' || latestJob.status === 'degraded')
               ? latestJob.results
               : undefined,
+          discovered_issues: session.discovered_issues,
           health: session.health,
         };
 
         res.status(200).json(statusResponse);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // GET /api/sessions/:sessionId/issues
+  router.get(
+    '/sessions/:sessionId/issues',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // Verify 24-hour session TTL
+        const expiresTime = new Date(session.expires_at).getTime();
+        const nowTime = Date.now();
+        if (expiresTime <= nowTime) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const owner =
+          (typeof req.query.owner === 'string' && req.query.owner.trim()) ||
+          gitHubIssuesClient.config.owner;
+        const repo =
+          (typeof req.query.repo === 'string' && req.query.repo.trim()) ||
+          gitHubIssuesClient.config.repo;
+        const forceRefresh = req.query.forceRefresh === 'true';
+
+        // Return stored fresh data when available rather than repeatedly calling GitHub
+        if (!forceRefresh && session.discovered_issues !== undefined) {
+          const cachedResponse: GetSessionIssuesResponse = {
+            session_id: session.session_id,
+            owner: owner || 'cached',
+            repo: repo || 'cached',
+            status: 'cached',
+            message: `Loaded ${session.discovered_issues.length} cached issues for session.`,
+            issues: session.discovered_issues,
+            total_count: session.discovered_issues.length,
+            cached: true,
+            is_fixture: session.discovered_issues.some((i) => i.is_fixture),
+          };
+          res.status(200).json(cachedResponse);
+          return;
+        }
+
+        // Fetch live or fixture issues via dedicated client
+        const result = await gitHubIssuesClient.fetchIssues(owner, repo);
+
+        // Map GitHub errors honestly
+        if (result.status === 'rate_limited') {
+          res.status(403).json({
+            error: result.message,
+            session_id: session.session_id,
+            owner: result.owner,
+            repo: result.repo,
+            status: 'rate_limited',
+            message: result.message,
+            issues: [],
+            total_count: 0,
+            cached: false,
+            rate_limit_remaining: result.rateLimitRemaining,
+            rate_limit_reset: result.rateLimitReset,
+            is_fixture: false,
+          });
+          return;
+        }
+
+        if (result.status === 'not_found') {
+          res.status(404).json({
+            error: result.message,
+            session_id: session.session_id,
+            owner: result.owner,
+            repo: result.repo,
+            status: 'not_found',
+            message: result.message,
+            issues: [],
+            total_count: 0,
+            cached: false,
+            rate_limit_remaining: result.rateLimitRemaining,
+            rate_limit_reset: result.rateLimitReset,
+            is_fixture: false,
+          });
+          return;
+        }
+
+        if (result.status === 'degraded' || result.status === 'failed') {
+          res.status(502).json({
+            error: result.message,
+            session_id: session.session_id,
+            owner: result.owner,
+            repo: result.repo,
+            status: result.status,
+            message: result.message,
+            issues: [],
+            total_count: 0,
+            cached: false,
+            rate_limit_remaining: result.rateLimitRemaining,
+            rate_limit_reset: result.rateLimitReset,
+            is_fixture: false,
+          });
+          return;
+        }
+
+        // Persist successful discovered issues to Firestore / repository
+        const updatedSession: SessionDocument = {
+          ...session,
+          discovered_issues: result.issues,
+          updated_at: new Date().toISOString(),
+        };
+        await sessionRepository.createSession(updatedSession);
+
+        const response: GetSessionIssuesResponse = {
+          session_id: session.session_id,
+          owner: result.owner,
+          repo: result.repo,
+          status: result.status,
+          message: result.message,
+          issues: result.issues,
+          total_count: result.totalCount,
+          cached: false,
+          rate_limit_remaining: result.rateLimitRemaining,
+          rate_limit_reset: result.rateLimitReset,
+          is_fixture: result.isFixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // POST /api/sessions/:sessionId/issues/:issueNumber/context-brief
+  router.post(
+    '/sessions/:sessionId/issues/:issueNumber/context-brief',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization: Reject unless issue is part of stored candidate issues
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session. Only session-discovered issues can be analyzed.`,
+          });
+          return;
+        }
+
+        const owner =
+          (typeof req.query.owner === 'string' && req.query.owner.trim()) ||
+          gitHubIssuesClient.config.owner;
+        const repo =
+          (typeof req.query.repo === 'string' && req.query.repo.trim()) ||
+          gitHubIssuesClient.config.repo;
+
+        // Build bounded source pack
+        const sourcePack = await sourcePackBuilder.buildSourcePack(
+          selectedIssue,
+          owner,
+          repo
+        );
+
+        // Generate and persist source-grounded brief
+        const briefDoc = await contextBriefService.generateAndPersistBrief(
+          sessionId,
+          sourcePack
+        );
+
+        const response: ContextBriefResponse = {
+          session_id: briefDoc.session_id,
+          issue_number: briefDoc.issue_number,
+          status: briefDoc.status,
+          brief: briefDoc.brief,
+          sources: briefDoc.sources,
+          model_id: briefDoc.model_id,
+          generated_at: briefDoc.generated_at,
+          validation_errors: briefDoc.validation_errors,
+          is_fixture: briefDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // GET /api/sessions/:sessionId/issues/:issueNumber/context-brief
+  router.get(
+    '/sessions/:sessionId/issues/:issueNumber/context-brief',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization: Reject unless issue is part of stored candidate issues
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const briefDoc = await contextBriefService.getBrief(sessionId, issueNumber);
+        if (!briefDoc) {
+          res.status(404).json({
+            error: `Context brief for issue #${issueNumber} has not been generated yet.`,
+          });
+          return;
+        }
+
+        const response: ContextBriefResponse = {
+          session_id: briefDoc.session_id,
+          issue_number: briefDoc.issue_number,
+          status: briefDoc.status,
+          brief: briefDoc.brief,
+          sources: briefDoc.sources,
+          model_id: briefDoc.model_id,
+          generated_at: briefDoc.generated_at,
+          validation_errors: briefDoc.validation_errors,
+          is_fixture: briefDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
       } catch (err) {
         next(err);
       }

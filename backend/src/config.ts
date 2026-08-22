@@ -59,6 +59,12 @@ const ConfigSchema = z.object({
   brightDataApiToken: z.string().default(process.env.BRIGHT_DATA_API_TOKEN || ''),
   brightDataJobCollectorId: z.string().default(process.env.BRIGHT_DATA_JOB_COLLECTOR_ID || ''),
   researchSeedUrls: z.array(z.string()).default(parseSeedUrls(process.env.RESEARCH_SEED_URLS)),
+  githubTargetOwner: z.string().default(process.env.GITHUB_TARGET_OWNER || ''),
+  githubTargetRepo: z.string().default(process.env.GITHUB_TARGET_REPO || ''),
+  githubToken: z.string().default(process.env.GITHUB_TOKEN || ''),
+  githubApiVersion: z.string().default(process.env.GITHUB_API_VERSION || '2022-11-28'),
+  githubIssuesPageSize: z.coerce.number().default(Number(process.env.GITHUB_ISSUES_PAGE_SIZE) || 30),
+  githubMaxIssues: z.coerce.number().default(Number(process.env.GITHUB_MAX_ISSUES) || 30),
   useInMemoryRepo: z.boolean().default(
     process.env.USE_IN_MEMORY_REPO === 'true' || process.env.NODE_ENV === 'test'
   ),
@@ -76,6 +82,16 @@ export const config = ConfigSchema.parse({
   brightDataApiToken: process.env.BRIGHT_DATA_API_TOKEN || '',
   brightDataJobCollectorId: process.env.BRIGHT_DATA_JOB_COLLECTOR_ID || '',
   researchSeedUrls: parseSeedUrls(process.env.RESEARCH_SEED_URLS),
+  githubTargetOwner: process.env.GITHUB_TARGET_OWNER || '',
+  githubTargetRepo: process.env.GITHUB_TARGET_REPO || '',
+  githubToken: process.env.GITHUB_TOKEN || '',
+  githubApiVersion: process.env.GITHUB_API_VERSION || '2022-11-28',
+  githubIssuesPageSize: process.env.GITHUB_ISSUES_PAGE_SIZE
+    ? Number(process.env.GITHUB_ISSUES_PAGE_SIZE)
+    : 30,
+  githubMaxIssues: process.env.GITHUB_MAX_ISSUES
+    ? Number(process.env.GITHUB_MAX_ISSUES)
+    : 30,
   useInMemoryRepo:
     process.env.USE_IN_MEMORY_REPO === 'true' || process.env.NODE_ENV === 'test',
 });
@@ -106,6 +122,35 @@ export const brightDataConfig: BrightDataConfig = Object.freeze({
   collectorLength: collectorId.length,
 });
 
+// Immutable typed GitHub configuration object constructed once at startup
+export interface GitHubConfig {
+  readonly owner: string;
+  readonly repo: string;
+  readonly token: string;
+  readonly apiVersion: string;
+  readonly pageSize: number;
+  readonly maxIssues: number;
+  readonly isConfigured: boolean;
+  readonly tokenPresent: boolean;
+  readonly tokenFingerprint: string;
+}
+
+const ghToken = config.githubToken.trim();
+const ghOwner = config.githubTargetOwner.trim();
+const ghRepo = config.githubTargetRepo.trim();
+
+export const githubConfig: GitHubConfig = Object.freeze({
+  owner: ghOwner,
+  repo: ghRepo,
+  token: ghToken,
+  apiVersion: config.githubApiVersion.trim() || '2022-11-28',
+  pageSize: Math.min(Math.max(1, config.githubIssuesPageSize), 100),
+  maxIssues: Math.max(1, config.githubMaxIssues),
+  isConfigured: Boolean(ghOwner.length > 0 && ghRepo.length > 0),
+  tokenPresent: Boolean(ghToken.length > 0),
+  tokenFingerprint: computeSha256Fingerprint(ghToken),
+});
+
 // Safe configuration fingerprint log on startup (no secrets or full tokens logged)
 console.log(
   `[BrightDataConfig] envLoaded: ${envLoaded} | tokenPresent: ${Boolean(
@@ -115,6 +160,16 @@ console.log(
   } | collectorLength: ${brightDataConfig.collectorLength} | collectorFingerprint: ${
     brightDataConfig.collectorFingerprint
   } | seedUrlCount: ${brightDataConfig.seedUrls.length}`
+);
+
+console.log(
+  `[GitHubConfig] envLoaded: ${envLoaded} | owner: ${githubConfig.owner || 'none'} | repo: ${
+    githubConfig.repo || 'none'
+  } | tokenPresent: ${githubConfig.tokenPresent} | tokenFingerprint: ${
+    githubConfig.tokenFingerprint
+  } | apiVersion: ${githubConfig.apiVersion} | pageSize: ${githubConfig.pageSize} | maxIssues: ${
+    githubConfig.maxIssues
+  }`
 );
 
 export type Config = z.infer<typeof ConfigSchema>;

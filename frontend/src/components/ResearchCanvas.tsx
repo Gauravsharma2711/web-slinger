@@ -13,6 +13,7 @@ export interface ResearchCanvasProps {
   errorMessage: string | null;
   onStartResearch: () => void;
   onRetryResearch: (forceNew?: boolean) => void;
+  onExploreIssues?: () => void;
   onReset: () => void;
 }
 
@@ -23,6 +24,7 @@ export const ResearchCanvas: React.FC<ResearchCanvasProps> = ({
   errorMessage,
   onStartResearch,
   onRetryResearch,
+  onExploreIssues,
   onReset,
 }) => {
   const currentJob = sessionStatus?.current_job;
@@ -120,10 +122,9 @@ export const ResearchCanvas: React.FC<ResearchCanvasProps> = ({
             <button
               type="button"
               className="ws-button-primary"
-              disabled
-              title="Company discovery unlocks in subsequent stage"
+              onClick={onExploreIssues}
             >
-              Continue to company matching
+              Explore candidate issues
             </button>
 
             <button
@@ -201,6 +202,16 @@ export const ResearchCanvas: React.FC<ResearchCanvasProps> = ({
                 onClick={() => onRetryResearch(true)}
               >
                 Start new research
+              </button>
+            )}
+
+            {results.length > 0 && onExploreIssues && (
+              <button
+                type="button"
+                className="ws-button-secondary"
+                onClick={onExploreIssues}
+              >
+                Explore candidate issues
               </button>
             )}
 

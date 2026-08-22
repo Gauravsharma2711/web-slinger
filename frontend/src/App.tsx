@@ -1,17 +1,25 @@
 /* Calm Proof Flow: one shared content rail, generous whitespace, no sidebar, evidence-first. */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { SessionDocument, SessionStatusResponse } from '@web-slinger/shared';
+import { SessionDocument, SessionStatusResponse, NormalizedIssue } from '@web-slinger/shared';
 import { AppShell } from './components/AppShell.js';
 import { EntryCanvas } from './components/EntryCanvas.js';
 import { ResearchCanvas } from './components/ResearchCanvas.js';
+import { IssuesCanvas } from './components/IssuesCanvas.js';
+import { ContextBriefCanvas } from './components/ContextBriefCanvas.js';
 import { startResearch, getSessionStatus } from './api/sessions.js';
 
 const SESSION_STORAGE_KEY = 'web-slinger-session-id';
+const VIEW_STORAGE_KEY = 'web-slinger-view';
+const SELECTED_ISSUE_KEY = 'web-slinger-selected-issue';
+
+type ActiveView = 'entry' | 'research' | 'issues' | 'brief';
 
 export const App: React.FC = () => {
   const [activeSession, setActiveSession] = useState<SessionDocument | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null);
+  const [activeView, setActiveView] = useState<ActiveView>('entry');
+  const [selectedIssue, setSelectedIssue] = useState<NormalizedIssue | null>(null);
   const [isStartingResearch, setIsStartingResearch] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -44,6 +52,7 @@ export const App: React.FC = () => {
               snapshot_id: status.snapshot_id ?? status.current_job?.snapshot_id ?? null,
               health: status.health,
               research_results: status.research_results,
+              discovered_issues: status.discovered_issues,
             };
           }
           return {
@@ -58,6 +67,7 @@ export const App: React.FC = () => {
             snapshot_id: status.snapshot_id ?? status.current_job?.snapshot_id ?? prev.snapshot_id ?? null,
             health: status.health,
             research_results: status.research_results,
+            discovered_issues: status.discovered_issues,
           };
         });
 
@@ -82,8 +92,29 @@ export const App: React.FC = () => {
   // Resume session from sessionStorage on mount
   useEffect(() => {
     const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    const savedView = (sessionStorage.getItem(VIEW_STORAGE_KEY) as ActiveView) || 'research';
+    const savedIssueJson = sessionStorage.getItem(SELECTED_ISSUE_KEY);
+
+    if (savedIssueJson) {
+      try {
+        const parsed = JSON.parse(savedIssueJson) as NormalizedIssue;
+        if (parsed && parsed.number) {
+          setSelectedIssue(parsed);
+        }
+      } catch {
+        // Ignore JSON error
+      }
+    }
+
     if (savedSessionId) {
       fetchStatus(savedSessionId);
+      if (savedView === 'brief' && savedIssueJson) {
+        setActiveView('brief');
+      } else if (savedView === 'issues') {
+        setActiveView('issues');
+      } else {
+        setActiveView('research');
+      }
     }
   }, [fetchStatus]);
 
@@ -108,7 +139,11 @@ export const App: React.FC = () => {
 
   const handleSessionCreated = (session: SessionDocument) => {
     sessionStorage.setItem(SESSION_STORAGE_KEY, session.session_id);
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'research');
+    sessionStorage.removeItem(SELECTED_ISSUE_KEY);
     setActiveSession(session);
+    setActiveView('research');
+    setSelectedIssue(null);
     setSessionStatus(null);
     setErrorMessage(null);
   };
@@ -151,10 +186,36 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleNavigateToIssues = () => {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'issues');
+    setActiveView('issues');
+  };
+
+  const handleBackToOpportunities = () => {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'research');
+    setActiveView('research');
+  };
+
+  const handleSelectIssue = (issue: NormalizedIssue) => {
+    setSelectedIssue(issue);
+    sessionStorage.setItem(SELECTED_ISSUE_KEY, JSON.stringify(issue));
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'brief');
+    setActiveView('brief');
+  };
+
+  const handleBackToIssues = () => {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'issues');
+    setActiveView('issues');
+  };
+
   const handleResetSession = () => {
     clearPollInterval();
     sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    sessionStorage.removeItem(VIEW_STORAGE_KEY);
+    sessionStorage.removeItem(SELECTED_ISSUE_KEY);
     setActiveSession(null);
+    setActiveView('entry');
+    setSelectedIssue(null);
     setSessionStatus(null);
     setErrorMessage(null);
   };
@@ -162,15 +223,21 @@ export const App: React.FC = () => {
   // Determine stage label for Header
   let stageLabel = 'ENTRY';
   if (activeSession) {
-    const jobStatus = sessionStatus?.current_job?.status;
-    if (jobStatus === 'running' || jobStatus === 'queued' || isStartingResearch) {
-      stageLabel = 'RESEARCHING';
-    } else if (jobStatus === 'completed') {
-      stageLabel = 'RESEARCH COMPLETED';
-    } else if (jobStatus === 'degraded' || jobStatus === 'failed') {
-      stageLabel = 'RESEARCH DEGRADED';
+    if (activeView === 'brief') {
+      stageLabel = 'CONTEXT BRIEF';
+    } else if (activeView === 'issues') {
+      stageLabel = 'CANDIDATE ISSUES';
     } else {
-      stageLabel = activeSession.stage.toUpperCase();
+      const jobStatus = sessionStatus?.current_job?.status;
+      if (jobStatus === 'running' || jobStatus === 'queued' || isStartingResearch) {
+        stageLabel = 'RESEARCHING';
+      } else if (jobStatus === 'completed') {
+        stageLabel = 'RESEARCH COMPLETED';
+      } else if (jobStatus === 'degraded' || jobStatus === 'failed') {
+        stageLabel = 'RESEARCH DEGRADED';
+      } else {
+        stageLabel = activeSession.stage.toUpperCase();
+      }
     }
   }
 
@@ -195,15 +262,32 @@ export const App: React.FC = () => {
   return (
     <AppShell stage={stageLabel}>
       {currentSession ? (
-        <ResearchCanvas
-          session={currentSession}
-          sessionStatus={sessionStatus}
-          isStartingResearch={isStartingResearch}
-          errorMessage={errorMessage}
-          onStartResearch={() => handleStartResearch(false)}
-          onRetryResearch={(forceNew) => handleStartResearch(forceNew ?? false)}
-          onReset={handleResetSession}
-        />
+        activeView === 'brief' && selectedIssue ? (
+          <ContextBriefCanvas
+            session={currentSession}
+            issue={selectedIssue}
+            onBackToIssues={handleBackToIssues}
+            onReset={handleResetSession}
+          />
+        ) : activeView === 'issues' ? (
+          <IssuesCanvas
+            session={currentSession}
+            onBackToOpportunities={handleBackToOpportunities}
+            onSelectIssue={handleSelectIssue}
+            onReset={handleResetSession}
+          />
+        ) : (
+          <ResearchCanvas
+            session={currentSession}
+            sessionStatus={sessionStatus}
+            isStartingResearch={isStartingResearch}
+            errorMessage={errorMessage}
+            onStartResearch={() => handleStartResearch(false)}
+            onRetryResearch={(forceNew) => handleStartResearch(forceNew ?? false)}
+            onExploreIssues={handleNavigateToIssues}
+            onReset={handleResetSession}
+          />
+        )
       ) : (
         <EntryCanvas onSessionCreated={handleSessionCreated} />
       )}

@@ -6,11 +6,17 @@ import { createSessionRouter } from './routes/session.js';
 import { SessionRepository } from './repositories/sessionRepository.js';
 import { JobRepository } from './repositories/jobRepository.js';
 import { ResearchAdapter } from './services/researchAdapter.js';
+import { GitHubIssuesClient } from './services/githubIssuesClient.js';
+import { SourcePackBuilder } from './services/sourcePackBuilder.js';
+import { ContextBriefService } from './services/contextBriefService.js';
 
 export function createApp(
   sessionRepository?: SessionRepository,
   jobRepository?: JobRepository,
-  researchAdapter?: ResearchAdapter
+  researchAdapter?: ResearchAdapter,
+  gitHubIssuesClient?: GitHubIssuesClient,
+  sourcePackBuilder?: SourcePackBuilder,
+  contextBriefService?: ContextBriefService
 ): express.Application {
   const app = express();
 
@@ -40,7 +46,17 @@ export function createApp(
   app.use(healthRouter);
 
   // Session routes
-  app.use('/api', createSessionRouter(sessionRepository, jobRepository, researchAdapter));
+  app.use(
+    '/api',
+    createSessionRouter(
+      sessionRepository,
+      jobRepository,
+      researchAdapter,
+      gitHubIssuesClient,
+      sourcePackBuilder,
+      contextBriefService
+    )
+  );
 
   // Safe Error Handler: never leak stack traces, env variables, or cloud credentials
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

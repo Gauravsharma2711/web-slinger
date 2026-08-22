@@ -97,7 +97,7 @@ describe('App Decision Canvas Flow & Accessibility', () => {
     expect(screen.getByText('RESEARCHING')).toBeInTheDocument();
   });
 
-  it('displays short result preview with company, role, and source link when completed', async () => {
+  it('displays short result preview with company, role, and source link when completed, and navigates to candidate issues', async () => {
     const sessionId = '11111111-2222-3333-4444-555555555555';
     sessionStorage.setItem('web-slinger-session-id', sessionId);
 
@@ -132,10 +132,51 @@ describe('App Decision Canvas Flow & Accessibility', () => {
       ],
     };
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => mockStatusCompleted,
-    } as Response);
+    const mockIssuesResponse = {
+      session_id: sessionId,
+      owner: 'vercel',
+      repo: 'next.js',
+      status: 'completed',
+      message: 'Found issues',
+      issues: [
+        {
+          id: 901,
+          number: 10,
+          title: 'Upgrade turbopack loader module',
+          body: 'Detailed description',
+          html_url: 'https://github.com/vercel/next.js/issues/10',
+          state: 'open',
+          labels: ['good-first-issue'],
+          assignees: [],
+          author: 'dev',
+          comments_count: 2,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          source_url: 'https://github.com/vercel/next.js/issues/10',
+          retrieved_at: new Date().toISOString(),
+          tier: 'A',
+          score: 90,
+          reasons: ['Matched onboarding label: "good-first-issue"'],
+          is_fixture: false,
+        },
+      ],
+      total_count: 1,
+      cached: false,
+      is_fixture: false,
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/issues')) {
+        return {
+          ok: true,
+          json: async () => mockIssuesResponse,
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => mockStatusCompleted,
+      } as Response;
+    });
 
     render(<App />);
 
@@ -150,6 +191,25 @@ describe('App Decision Canvas Flow & Accessibility', () => {
       'https://vercel.com/careers/1'
     );
     expect(screen.getByText('RESEARCH COMPLETED')).toBeInTheDocument();
+
+    // Click "Explore candidate issues"
+    const exploreBtn = screen.getByRole('button', { name: 'Explore candidate issues' });
+    fireEvent.click(exploreBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Candidate issues.')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('CANDIDATE ISSUES')).toBeInTheDocument();
+    expect(screen.getByText(/Upgrade turbopack loader module/i)).toBeInTheDocument();
+
+    // Click "Understand this issue" to transition to Context Brief view
+    const understandBtn = screen.getByRole('button', { name: 'Understand this issue' });
+    fireEvent.click(understandBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('CONTEXT BRIEF')).toBeInTheDocument();
+    });
   });
 
   it('displays degraded state with retry action and clear fixture label when fixture data used', async () => {
