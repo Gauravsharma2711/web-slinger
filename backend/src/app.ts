@@ -9,6 +9,9 @@ import { ResearchAdapter } from './services/researchAdapter.js';
 import { GitHubIssuesClient } from './services/githubIssuesClient.js';
 import { SourcePackBuilder } from './services/sourcePackBuilder.js';
 import { ContextBriefService } from './services/contextBriefService.js';
+import { WorkPlanService } from './services/workPlanService.js';
+import { PatchDraftService } from './services/patchDraftService.js';
+import { VerificationPlanService } from './services/verificationPlanService.js';
 
 export function createApp(
   sessionRepository?: SessionRepository,
@@ -16,7 +19,10 @@ export function createApp(
   researchAdapter?: ResearchAdapter,
   gitHubIssuesClient?: GitHubIssuesClient,
   sourcePackBuilder?: SourcePackBuilder,
-  contextBriefService?: ContextBriefService
+  contextBriefService?: ContextBriefService,
+  workPlanService?: WorkPlanService,
+  patchDraftService?: PatchDraftService,
+  verificationPlanService?: VerificationPlanService
 ): express.Application {
   const app = express();
 
@@ -54,7 +60,10 @@ export function createApp(
       researchAdapter,
       gitHubIssuesClient,
       sourcePackBuilder,
-      contextBriefService
+      contextBriefService,
+      workPlanService,
+      patchDraftService,
+      verificationPlanService
     )
   );
 

@@ -1,82 +1,104 @@
-# Day 3 Source-Grounded Context Brief Walkthrough
+# Day 4 Block 3: Calm Web-Slinger Workbench UI Walkthrough
 
 ## Summary
-Implemented the Day 3 source-grounded Gemini context brief service and REST routes for Web-Slinger. The context brief enables developers to analyze and understand session-discovered candidate issues using evidence-grounded generative AI while strictly upholding human-in-the-loop boundaries and prompt injection defenses.
+Implemented **Day 4, Block 3** for Web-Slinger: a calm, evidence-grounded workbench interface encompassing Work Plan, Source Review, Patch Review, and Verification Prep.
+
+The workbench adheres to the **Calm Proof Flow** design philosophy: one shared content rail, generous whitespace, dotted canvas background, no sidebar or complex dashboard shell, and zero horizontal overflow across all desktop and mobile viewports.
 
 ---
 
-## 1. Architecture & Security Contract
+## 1. Day 4 Workbench Architecture & Step Flow
 
 ```mermaid
-flowchart TD
-    Client[Human Developer / Frontend] -->|POST /sessions/:sessionId/issues/:num/context-brief| Router[Session Router]
-    Router -->|1. Validate 24h Session TTL| SessionRepo[(Session Repository)]
-    Router -->|2. Selected-Issue Authorization| IssueAuth{In Discovered Issues?}
-    IssueAuth -->|No| Reject404[404 Reject Unauthorized Issue]
-    IssueAuth -->|Yes| PackBuilder[SourcePackBuilder]
-    PackBuilder -->|Fetch bounded issue, comments, repo, contributing, readme| GitHubAPI[GitHub API (Read-Only)]
-    PackBuilder -->|Construct bounded SourcePack| BriefService[ContextBriefService]
-    BriefService -->|Call with untrusted source delimiters & system instruction| VertexAI[Vertex AI gemini-3.7-flash]
-    VertexAI -->|Strict JSON Response| Validator[Brief Validator]
-    Validator -->|Check Schema, Exact URLs, No Autonomy Language| Decision{Valid?}
-    Decision -->|Pass| CompletedDoc[Status: completed]
-    Decision -->|Fail| NeedsReviewDoc[Status: needs_review]
-    CompletedDoc -->|Persist Subcollection| BriefRepo[(Firestore context_briefs)]
-    NeedsReviewDoc -->|Persist Subcollection| BriefRepo
-    BriefRepo -->|Return ContextBriefResponse| Client
+flowchart LR
+    Brief[Context Brief Canvas] -->|I have read this — open workbench| Step1[1. Work Plan]
+    Step1 -->|Proceed to source review| Step2[2. Source Review]
+    Step2 -->|Affirmation + Checkboxes -> Generate Patch| Step3[3. Patch Review]
+    Step3 -->|Proceed to verification prep| Step4[4. Verification Prep]
+    Step4 -->|Copy checklist / New Session| Complete[Developer Tests Locally]
 ```
 
-### Key Security & Integrity Guarantees
-1. **Selected-Issue Authorization:** Rejects any issue number not present in `session.discovered_issues`. Arbitrary repository URLs and issue numbers from clients are denied.
-2. **Strict Source Caps:**
-   - Selected issue description: included with structured metadata
-   - Comments: strictly capped at most recent 10 comments
-   - `CONTRIBUTING.md`: capped at 12,000 characters
-   - `README.md`: capped at 8,000 characters
-3. **Untrusted Content Demarcation:** All GitHub content is wrapped in explicit source delimiters and marked as untrusted input.
-4. **Human-in-the-Loop Constraint:** Prompt instructions and regex validators forbid automated patch diffs, git commit/push/branch instructions, and claims of guaranteed acceptance.
-5. **Exact URL Citation Validation:** Every citation URL in `sourceCitations` and reading directive in `whatToReadFirst` must be an exact match in the source pack's allowlist.
-6. **No Token / Secret Leakage:** Only public URLs, non-secret metadata, and model IDs are stored.
+### The 4 Connected Workbench Steps
+
+1. **Step 1: Work Plan (`plan`)**
+   - Displays confirmed problem statement, candidate files with `CONFIRMED` / `CANDIDATE` confidence badges and evidence links, smallest change plan (ordered steps), risks and unknowns, recommended manual checks, and source citations.
+   - Primary action: `Proceed to source review →`
+
+2. **Step 2: Source Review (`sources`)**
+   - Human-in-the-loop verification gate.
+   - Displays all retrieved file evidence cards with path, ref, SHA, canonical `Open on GitHub ↗` links, and code preview excerpts.
+   - Requires checking each retrieved source file checkbox (`I have opened and reviewed <path>`).
+   - Requires checking the persistent affirmation declaration:
+     *“I opened the cited sources and understand this is a draft. I will review, edit, and test any proposed change myself.”*
+   - `Generate patch draft` is disabled until all checkboxes are checked.
+
+3. **Step 3: Patch Review (`patch`)**
+   - Persistent mandatory notice banner:
+     *“Draft only. Web-Slinger has not modified a repository or run these changes. Read, edit, apply, and test the draft in your own local clone.”*
+   - Changed files header (`1 changed file`, `2 changed lines`).
+   - Warnings & validation status.
+   - Monospace dark-mode styled unified diff editor (`textarea`), allowing developers to edit the draft in memory.
+   - Action cluster:
+     - `Save my edited draft` (calls `PUT` endpoint to persist changes to the session record)
+     - `Copy patch` (copies diff to clipboard)
+     - `Download .patch` (downloads `.patch` file for local application with `git apply`)
+     - `Proceed to verification prep →`
+   - **Zero forbidden action buttons**: No buttons named `Apply`, `Fix`, `Push`, `Commit`, `Submit`, or `Create pull request`.
+
+4. **Step 4: Verification Prep (`verification`)**
+   - Displays mandatory verification disclaimer:
+     *“All checks must be performed manually by the developer. Web-Slinger does not execute local commands or evaluate test outcomes.”*
+   - Manual checklist where every check item is strictly badged `NOT VERIFIED`.
+   - Suggested terminal commands (e.g. `pnpm run test:curriculum`).
+   - `Copy checklist` action to copy Markdown-formatted checklist to clipboard for local tracking.
 
 ---
 
-## 2. Shared Contracts & Schemas
+## 2. All Day 4 Routes & Endpoints
 
-Created [shared/src/schemas/contextBrief.ts](file:///c:/web-slinger/web-slinger/shared/src/schemas/contextBrief.ts):
-- `WhatToReadFirstItemSchema`: `{ instruction: string, sourceUrl: string }`
-- `SourceCitationItemSchema`: `{ claim: string, sourceUrl: string }`
-- `ContextBriefContentSchema`: `{ summary, likelyContributionShape, whatToReadFirst, unknownsToVerify, suggestedFirstQuestion, sourceCitations }`
-- `SourcePackItemSchema`: `{ title, url, retrievedAt, content? }`
-- `ContextBriefDocumentSchema`: Document schema stored in Firestore subcollection `sessions/{sessionId}/context_briefs/{issueNumber}`
-- `ContextBriefResponseSchema`: API response format
+### Frontend UI Views
+- `EntryCanvas`: Stack input and session creation.
+- `ResearchCanvas`: Bright Data live opportunity research.
+- `IssuesCanvas`: Normalized, triaged candidate issues (Tier A / Tier B).
+- `ContextBriefCanvas`: Source-grounded context brief with mandatory notice.
+- `WorkbenchCanvas`:
+  - `step: 'plan'`: Work Plan
+  - `step: 'sources'`: Source Review Gating
+  - `step: 'patch'`: Patch Review & In-Memory Editing
+  - `step: 'verification'`: Verification Prep Manual Checklist
+
+### Backend REST API Endpoints
+- `POST /api/sessions/:sessionId/issues/:issueNumber/work-plan`
+- `GET  /api/sessions/:sessionId/issues/:issueNumber/work-plan`
+- `POST /api/sessions/:sessionId/issues/:issueNumber/patch-draft` (Requires `userAffirmation: true` and verified `{ path, sha }` matching)
+- `GET  /api/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId`
+- `PUT  /api/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId` (In-memory/Firestore edit only; zero disk/GitHub writes)
+- `POST /api/sessions/:sessionId/issues/:issueNumber/verification-plan`
 
 ---
 
-## 3. Backend Implementation
+## 3. Work Intentionally Deferred to Day 5
 
-- [backend/src/repositories/contextBriefRepository.ts](file:///c:/web-slinger/web-slinger/backend/src/repositories/contextBriefRepository.ts): Firestore subcollection and in-memory persistence with undefined-safety.
-- [backend/src/services/sourcePackBuilder.ts](file:///c:/web-slinger/web-slinger/backend/src/services/sourcePackBuilder.ts): Bounded source pack aggregation with 10-comment, 12k-contributing, and 8k-readme caps.
-- [backend/src/services/contextBriefService.ts](file:///c:/web-slinger/web-slinger/backend/src/services/contextBriefService.ts): Vertex AI integration using `gemini-3.7-flash` via Application Default Credentials (ADC), strict JSON validation, allowlist check, forbidden language filtering, and fallback persistence.
-- [backend/src/routes/session.ts](file:///c:/web-slinger/web-slinger/backend/src/routes/session.ts):
-  - `POST /api/sessions/:sessionId/issues/:issueNumber/context-brief`
-  - `GET /api/sessions/:sessionId/issues/:issueNumber/context-brief`
+To maintain strict human-in-the-loop integrity and avoid premature feature bloat, the following items are intentionally deferred to Day 5:
+1. **Multi-File Interactive Side-by-Side Diff Viewer:** Side-by-side split visual diff with syntax highlighting per language (currently uses unified diff editor).
+2. **Local Git Helper CLI Script / Export Package:** Optional developer CLI bundle to automate pulling verification checklists into local terminal workflows.
+3. **Session Persistence & Export Archive (.zip / JSON):** Complete session export bundle with brief, work plan, patch, and checklist for offline archive.
+4. **Enhanced Onboarding Telemetry / Feedback:** Optional developer rating and feedback on work plan and patch quality.
 
 ---
 
-## 4. Verification & Live Test Results
+## 4. Verification & Quality Assurance
 
-### Workspace Quality Checks
-- **Vitest Suites:** 111 tests passed across 3 packages (25 shared, 61 backend, 25 frontend).
-- **TypeScript Typecheck:** 0 errors across `@web-slinger/shared`, `@web-slinger/backend`, and `@web-slinger/frontend`.
-- **ESLint:** 0 errors, 0 warnings across all packages.
-- **Production Build:** `pnpm build` succeeded in all workspaces.
+### Test Suites (168 Total Tests Passing)
+- **`@web-slinger/shared`:** 37 passed
+- **`@web-slinger/backend`:** 88 passed
+- **`@web-slinger/frontend`:** 43 passed (including `WorkbenchCanvas.test.tsx` and multi-breakpoint `layout.test.tsx`)
 
-### Live End-to-End Test Execution
-- **Target Repository:** `freeCodeCamp/freeCodeCamp`
-- **Selected Candidate Issue:** `#69622` ("fs lesson incorrectly states that every method has a synchronous version")
-- **Issue Tier & Score:** Tier A (Score 95)
-- **Source Count:** 3 sources in pack (`#69622`, repository metadata, `README.md`)
-- **Model Invocation:** Vertex AI `gemini-3.7-flash` (ADC credentials)
-- **Citation Validation Result:** 100% valid (0 validation errors, all cited URLs in exact allowlist)
-- **Persistence Status:** `status: 'completed'` stored in Firestore subcollection `context_briefs/69622`
-- **GET Endpoint:** HTTP 200 returned matching persisted context brief.
+### Responsive & Layout Validation
+- Tested across **1920px (Desktop Wide)**, **1280px (Laptop Standard)**, **768px (Tablet)**, and **375px (Mobile)** viewports.
+- Verified universal root overflow safety (`document.documentElement.scrollWidth <= document.documentElement.clientWidth`).
+- Single shared content rail (`ws-content-rail`), zero `100vw` layout shifts.
+
+### Lint & Build
+- `pnpm -r run lint`: Clean with 0 warnings/errors.
+- `pnpm -r run build`: Clean TypeScript compile and Vite production bundle.

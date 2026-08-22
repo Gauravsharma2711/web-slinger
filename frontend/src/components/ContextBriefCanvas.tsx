@@ -16,6 +16,7 @@ export interface ContextBriefCanvasProps {
   session: SessionDocument;
   issue: NormalizedIssue;
   onBackToIssues: () => void;
+  onOpenWorkbench?: () => void;
   onReset: () => void;
 }
 
@@ -23,6 +24,7 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
   session,
   issue,
   onBackToIssues,
+  onOpenWorkbench,
   onReset,
 }) => {
   const [briefResponse, setBriefResponse] = useState<ContextBriefResponse | null>(null);
@@ -79,9 +81,13 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
   }, [loadOrGenerateBrief]);
 
   const handleOpenWorkbench = () => {
-    setWorkbenchMessage(
-      'Brief verified. The Staged Workbench (Context → Proposal → Verification) unlocks in Day 4.'
-    );
+    if (onOpenWorkbench) {
+      onOpenWorkbench();
+    } else {
+      setWorkbenchMessage(
+        'Brief verified. The Staged Workbench (Context → Proposal → Verification) unlocks in Day 4.'
+      );
+    }
   };
 
   const isVertexError =

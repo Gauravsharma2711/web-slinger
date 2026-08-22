@@ -7,6 +7,11 @@ import {
   ResearchJobResponse,
   GetSessionIssuesResponse,
   ContextBriefResponse,
+  WorkPlanResponse,
+  PatchDraftResponse,
+  VerificationPlanResponse,
+  CreatePatchDraftInputSchema,
+  UpdatePatchDraftInputSchema,
 } from '@web-slinger/shared';
 import {
   SessionRepository,
@@ -34,6 +39,18 @@ import {
   ContextBriefService,
   createDefaultContextBriefService,
 } from '../services/contextBriefService.js';
+import {
+  WorkPlanService,
+  createDefaultWorkPlanService,
+} from '../services/workPlanService.js';
+import {
+  PatchDraftService,
+  createDefaultPatchDraftService,
+} from '../services/patchDraftService.js';
+import {
+  VerificationPlanService,
+  createDefaultVerificationPlanService,
+} from '../services/verificationPlanService.js';
 
 // Bounded runner timeout suitable for real Scraper Studio collections (5+ minutes)
 const RESEARCH_RUNNER_TIMEOUT_MS = 320000;
@@ -60,7 +77,10 @@ export function createSessionRouter(
   researchAdapter: ResearchAdapter = createDefaultResearchAdapter(),
   gitHubIssuesClient: GitHubIssuesClient = createDefaultGitHubIssuesClient(),
   sourcePackBuilder: SourcePackBuilder = createDefaultSourcePackBuilder(),
-  contextBriefService: ContextBriefService = createDefaultContextBriefService()
+  contextBriefService: ContextBriefService = createDefaultContextBriefService(),
+  workPlanService: WorkPlanService = createDefaultWorkPlanService(),
+  patchDraftService: PatchDraftService = createDefaultPatchDraftService(),
+  verificationPlanService: VerificationPlanService = createDefaultVerificationPlanService()
 ): Router {
   const router = Router();
 
@@ -641,6 +661,527 @@ export function createSessionRouter(
           generated_at: briefDoc.generated_at,
           validation_errors: briefDoc.validation_errors,
           is_fixture: briefDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // POST /api/sessions/:sessionId/issues/:issueNumber/work-plan
+  router.post(
+    '/sessions/:sessionId/issues/:issueNumber/work-plan',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization: Reject unless issue is part of stored candidate issues
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session. Only session-discovered issues can be analyzed.`,
+          });
+          return;
+        }
+
+        const owner =
+          (typeof req.query.owner === 'string' && req.query.owner.trim()) ||
+          gitHubIssuesClient.config.owner;
+        const repo =
+          (typeof req.query.repo === 'string' && req.query.repo.trim()) ||
+          gitHubIssuesClient.config.repo;
+        const ref =
+          (typeof req.query.ref === 'string' && req.query.ref.trim()) || 'main';
+
+        // Retrieve existing context brief if previously generated
+        const contextBriefDoc = await contextBriefService.getBrief(sessionId, issueNumber);
+
+        // Generate and persist evidence-grounded work plan
+        const planDoc = await workPlanService.generateWorkPlan(
+          sessionId,
+          selectedIssue,
+          owner,
+          repo,
+          contextBriefDoc,
+          ref
+        );
+
+        const response: WorkPlanResponse = {
+          session_id: planDoc.session_id,
+          issue_number: planDoc.issue_number,
+          status: planDoc.status,
+          plan: planDoc.plan,
+          file_evidence: planDoc.file_evidence,
+          model_id: planDoc.model_id,
+          generated_at: planDoc.generated_at,
+          validation_errors: planDoc.validation_errors,
+          is_fixture: planDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // GET /api/sessions/:sessionId/issues/:issueNumber/work-plan
+  router.get(
+    '/sessions/:sessionId/issues/:issueNumber/work-plan',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization: Reject unless issue is part of stored candidate issues
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const planDoc = await workPlanService.getWorkPlan(sessionId, issueNumber);
+        if (!planDoc) {
+          res.status(404).json({
+            error: `Contribution work plan for issue #${issueNumber} has not been generated yet.`,
+          });
+          return;
+        }
+
+        const response: WorkPlanResponse = {
+          session_id: planDoc.session_id,
+          issue_number: planDoc.issue_number,
+          status: planDoc.status,
+          plan: planDoc.plan,
+          file_evidence: planDoc.file_evidence,
+          model_id: planDoc.model_id,
+          generated_at: planDoc.generated_at,
+          validation_errors: planDoc.validation_errors,
+          is_fixture: planDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // POST /api/sessions/:sessionId/issues/:issueNumber/patch-draft
+  router.post(
+    '/sessions/:sessionId/issues/:issueNumber/patch-draft',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        // Validate user input with CreatePatchDraftInputSchema (must have non-empty reviewedSources and userAffirmation === true)
+        const parseResult = CreatePatchDraftInputSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          res.status(409).json({
+            error: 'User source review and affirmative agreement are required before patch drafting.',
+            details: parseResult.error.format(),
+          });
+          return;
+        }
+
+        const { reviewedSources, userAffirmation } = parseResult.data;
+
+        // Retrieve existing work plan to check file evidence
+        const workPlanDoc = await workPlanService.getWorkPlan(sessionId, issueNumber);
+        const sessionFileEvidence = workPlanDoc?.file_evidence || [];
+
+        // Verify reviewed sources against session evidence
+        const verification = patchDraftService.verifyReviewedSources(
+          reviewedSources,
+          sessionFileEvidence
+        );
+
+        if (!verification.valid) {
+          res.status(409).json({
+            error: verification.error || 'Reviewed sources mismatch with session file evidence.',
+          });
+          return;
+        }
+
+        // Generate and persist patch draft
+        const draftDoc = await patchDraftService.generatePatchDraft(
+          sessionId,
+          selectedIssue,
+          reviewedSources,
+          userAffirmation,
+          workPlanDoc,
+          sessionFileEvidence
+        );
+
+        const response: PatchDraftResponse = {
+          patch_id: draftDoc.patch_id,
+          session_id: draftDoc.session_id,
+          issue_number: draftDoc.issue_number,
+          status: draftDoc.status,
+          diff_content: draftDoc.diff_content,
+          user_affirmation: draftDoc.user_affirmation,
+          reviewed_at: draftDoc.reviewed_at,
+          reviewed_sources: draftDoc.reviewed_sources,
+          changed_files: draftDoc.changed_files,
+          total_changed_lines: draftDoc.total_changed_lines,
+          model_id: draftDoc.model_id,
+          generated_at: draftDoc.generated_at,
+          validation_errors: draftDoc.validation_errors,
+          warnings: draftDoc.warnings,
+          is_user_edited: draftDoc.is_user_edited,
+          is_fixture: draftDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // GET /api/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId
+  router.get(
+    '/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        const rawPatchId = Array.isArray(req.params.patchId)
+          ? req.params.patchId[0]
+          : req.params.patchId;
+        const patchId = String(rawPatchId);
+
+        if (!patchId) {
+          res.status(400).json({ error: 'Patch ID is required' });
+          return;
+        }
+
+        const draftDoc = await patchDraftService.getPatchDraft(sessionId, patchId);
+        if (!draftDoc) {
+          res.status(404).json({
+            error: `Patch draft "${patchId}" was not found in this session.`,
+          });
+          return;
+        }
+
+        const response: PatchDraftResponse = {
+          patch_id: draftDoc.patch_id,
+          session_id: draftDoc.session_id,
+          issue_number: draftDoc.issue_number,
+          status: draftDoc.status,
+          diff_content: draftDoc.diff_content,
+          user_affirmation: draftDoc.user_affirmation,
+          reviewed_at: draftDoc.reviewed_at,
+          reviewed_sources: draftDoc.reviewed_sources,
+          changed_files: draftDoc.changed_files,
+          total_changed_lines: draftDoc.total_changed_lines,
+          model_id: draftDoc.model_id,
+          generated_at: draftDoc.generated_at,
+          validation_errors: draftDoc.validation_errors,
+          warnings: draftDoc.warnings,
+          is_user_edited: draftDoc.is_user_edited,
+          is_fixture: draftDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // PUT /api/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId
+  router.put(
+    '/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        const rawPatchId = Array.isArray(req.params.patchId)
+          ? req.params.patchId[0]
+          : req.params.patchId;
+        const patchId = String(rawPatchId);
+
+        if (!patchId) {
+          res.status(400).json({ error: 'Patch ID is required' });
+          return;
+        }
+
+        const parseResult = UpdatePatchDraftInputSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          res.status(400).json({
+            error: 'Invalid patch draft update payload',
+            details: parseResult.error.format(),
+          });
+          return;
+        }
+
+        const { diffContent } = parseResult.data;
+
+        const updatedDoc = await patchDraftService.updateUserEditedPatchDraft(
+          sessionId,
+          patchId,
+          diffContent
+        );
+
+        if (!updatedDoc) {
+          res.status(404).json({
+            error: `Patch draft "${patchId}" was not found to update.`,
+          });
+          return;
+        }
+
+        const response: PatchDraftResponse = {
+          patch_id: updatedDoc.patch_id,
+          session_id: updatedDoc.session_id,
+          issue_number: updatedDoc.issue_number,
+          status: updatedDoc.status,
+          diff_content: updatedDoc.diff_content,
+          user_affirmation: updatedDoc.user_affirmation,
+          reviewed_at: updatedDoc.reviewed_at,
+          reviewed_sources: updatedDoc.reviewed_sources,
+          changed_files: updatedDoc.changed_files,
+          total_changed_lines: updatedDoc.total_changed_lines,
+          model_id: updatedDoc.model_id,
+          generated_at: updatedDoc.generated_at,
+          validation_errors: updatedDoc.validation_errors,
+          warnings: updatedDoc.warnings,
+          is_user_edited: updatedDoc.is_user_edited,
+          is_fixture: updatedDoc.is_fixture,
+        };
+
+        res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // POST /api/sessions/:sessionId/issues/:issueNumber/verification-plan
+  router.post(
+    '/sessions/:sessionId/issues/:issueNumber/verification-plan',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const sessionIdParam = req.params.sessionId;
+        const sessionId = Array.isArray(sessionIdParam) ? sessionIdParam[0] : sessionIdParam;
+
+        if (!sessionId) {
+          res.status(400).json({ error: 'Session ID is required' });
+          return;
+        }
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' });
+          return;
+        }
+
+        // 24h TTL check
+        const expiresTime = new Date(session.expires_at).getTime();
+        if (expiresTime <= Date.now()) {
+          res.status(404).json({ error: 'Session has expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const workPlanDoc = await workPlanService.getWorkPlan(sessionId, issueNumber);
+
+        const vPlanDoc = await verificationPlanService.generateVerificationPlan(
+          sessionId,
+          selectedIssue,
+          workPlanDoc
+        );
+
+        const response: VerificationPlanResponse = {
+          session_id: vPlanDoc.session_id,
+          issue_number: vPlanDoc.issue_number,
+          plan: vPlanDoc.plan,
+          model_id: vPlanDoc.model_id,
+          generated_at: vPlanDoc.generated_at,
+          is_fixture: vPlanDoc.is_fixture,
         };
 
         res.status(200).json(response);

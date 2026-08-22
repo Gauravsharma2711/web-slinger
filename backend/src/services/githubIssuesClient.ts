@@ -2,6 +2,7 @@ import {
   NormalizedIssue,
   NormalizedIssueSchema,
   GitHubResearchStatus,
+  RepositoryFileEvidence,
 } from '@web-slinger/shared';
 import { githubConfig, GitHubConfig, config } from '../config.js';
 import { triageIssue } from './issueTriage.js';
@@ -418,6 +419,298 @@ export class GitHubIssuesClient {
         isFixture: false,
       };
     }
+  }
+
+  /**
+   * Fetches the decoded content of a specific file from target GitHub repository.
+   * Target endpoint: GET https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}
+   * Applies strict per-file bound of 12,000 characters.
+   */
+  async fetchFileContent(
+    ownerParam?: string,
+    repoParam?: string,
+    pathParam?: string,
+    ref = 'main'
+  ): Promise<RepositoryFileEvidence | null> {
+    const owner = (ownerParam || this.activeConfig.owner).trim();
+    const repo = (repoParam || this.activeConfig.repo).trim();
+    const filePath = (pathParam || '').trim().replace(/^\/+/, '');
+
+    if (!owner || !repo || !filePath) {
+      return null;
+    }
+
+    const MAX_FILE_CHARS = 12000;
+
+    // In DEMO_MODE, return realistic synthetic file content without external calls
+    if (this.isDemoMode) {
+      console.log(`[GitHubIssuesClient] DEMO_MODE active: returning fixture file for ${owner}/${repo}/${filePath}`);
+      const mockContent = `# [DEMO FIXTURE] ${filePath}
+# Generated file evidence for ${owner}/${repo} in DEMO_MODE.
+# Simulated source content for demonstration and testing.
+
+export function exampleModule() {
+  return "demo evidence";
+}
+`;
+      return {
+        path: filePath,
+        ref,
+        sha: 'demo-sha-' + Buffer.from(filePath).toString('hex').slice(0, 8),
+        htmlUrl: `https://github.com/${owner}/${repo}/blob/${ref}/${filePath}`,
+        retrievedAt: new Date().toISOString(),
+        content: mockContent,
+        sizeBytes: Buffer.byteLength(mockContent, 'utf8'),
+        isTruncated: false,
+      };
+    }
+
+    const targetUrl = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${filePath}?ref=${encodeURIComponent(ref)}`;
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': this.activeConfig.apiVersion,
+      'User-Agent': 'Web-Slinger/1.0 (Human-in-the-Loop OSS Research)',
+    };
+
+    if (this.activeConfig.token) {
+      headers['Authorization'] = `Bearer ${this.activeConfig.token}`;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
+      const response = await fetch(targetUrl, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.status === 404) {
+        return null;
+      }
+
+      if (!response.ok) {
+        console.warn(
+          `[GitHubIssuesClient] File fetch failed for ${owner}/${repo}/${filePath}: HTTP ${response.status}`
+        );
+        return null;
+      }
+
+      const data = (await response.json()) as {
+        type?: string;
+        size?: number;
+        path?: string;
+        sha?: string;
+        html_url?: string;
+        content?: string;
+        encoding?: string;
+      };
+
+      if (data.type !== 'file' || !data.content) {
+        return null;
+      }
+
+      let decodedContent = '';
+      if (data.encoding === 'base64') {
+        decodedContent = Buffer.from(data.content, 'base64').toString('utf8');
+      } else {
+        decodedContent = data.content;
+      }
+
+      let isTruncated = false;
+      let omittedReason: string | undefined;
+      let boundedContent = decodedContent;
+
+      if (decodedContent.length > MAX_FILE_CHARS) {
+        boundedContent =
+          decodedContent.slice(0, MAX_FILE_CHARS) +
+          '\n\n[... OMITTED REMAINDER: Truncated at 12,000 characters ...]';
+        isTruncated = true;
+        omittedReason = 'Exceeded per-file limit of 12,000 characters';
+      }
+
+      return {
+        path: data.path || filePath,
+        ref,
+        sha: data.sha || 'unknown-sha',
+        htmlUrl: data.html_url || `https://github.com/${owner}/${repo}/blob/${ref}/${filePath}`,
+        retrievedAt: new Date().toISOString(),
+        content: boundedContent,
+        sizeBytes: data.size || Buffer.byteLength(decodedContent, 'utf8'),
+        isTruncated,
+        omittedReason,
+      };
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[GitHubIssuesClient] Error fetching file ${owner}/${repo}/${filePath}: ${errorMsg}`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Fetches the git tree of the repository for path discovery.
+   * Target endpoint: GET https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}?recursive=1
+   * Detects and records tree truncation honestly.
+   */
+  async fetchRepositoryTree(
+    ownerParam?: string,
+    repoParam?: string,
+    ref = 'main',
+    recursive = true
+  ): Promise<{
+    tree: Array<{ path: string; mode: string; type: string; sha: string; size?: number; url: string }>;
+    truncated: boolean;
+  }> {
+    const owner = (ownerParam || this.activeConfig.owner).trim();
+    const repo = (repoParam || this.activeConfig.repo).trim();
+
+    if (!owner || !repo) {
+      return { tree: [], truncated: false };
+    }
+
+    if (this.isDemoMode) {
+      console.log(`[GitHubIssuesClient] DEMO_MODE active: returning fixture tree for ${owner}/${repo}`);
+      return {
+        tree: [
+          {
+            path: 'curriculum/challenges/english/07-node-js/lecture.md',
+            mode: '100644',
+            type: 'blob',
+            sha: 'demo-tree-sha-1',
+            size: 1500,
+            url: `https://api.github.com/repos/${owner}/${repo}/git/blobs/demo-tree-sha-1`,
+          },
+          {
+            path: 'README.md',
+            mode: '100644',
+            type: 'blob',
+            sha: 'demo-tree-sha-2',
+            size: 4000,
+            url: `https://api.github.com/repos/${owner}/${repo}/git/blobs/demo-tree-sha-2`,
+          },
+          {
+            path: 'CONTRIBUTING.md',
+            mode: '100644',
+            type: 'blob',
+            sha: 'demo-tree-sha-3',
+            size: 6000,
+            url: `https://api.github.com/repos/${owner}/${repo}/git/blobs/demo-tree-sha-3`,
+          },
+        ],
+        truncated: false,
+      };
+    }
+
+    const recursiveQuery = recursive ? '?recursive=1' : '';
+    const targetUrl = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(ref)}${recursiveQuery}`;
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': this.activeConfig.apiVersion,
+      'User-Agent': 'Web-Slinger/1.0 (Human-in-the-Loop OSS Research)',
+    };
+
+    if (this.activeConfig.token) {
+      headers['Authorization'] = `Bearer ${this.activeConfig.token}`;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
+      const response = await fetch(targetUrl, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.warn(`[GitHubIssuesClient] Tree fetch failed for ${owner}/${repo}: HTTP ${response.status}`);
+        return { tree: [], truncated: false };
+      }
+
+      const data = (await response.json()) as {
+        sha?: string;
+        url?: string;
+        tree?: Array<{ path: string; mode: string; type: string; sha: string; size?: number; url: string }>;
+        truncated?: boolean;
+      };
+
+      const truncated = Boolean(data.truncated);
+      if (truncated) {
+        console.warn(
+          `[GitHubIssuesClient] Tree response for ${owner}/${repo} was truncated by GitHub API. Full recursive search not guaranteed.`
+        );
+      }
+
+      return {
+        tree: data.tree || [],
+        truncated,
+      };
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[GitHubIssuesClient] Error fetching tree for ${owner}/${repo}: ${errorMsg}`);
+      return { tree: [], truncated: false };
+    }
+  }
+
+  /**
+   * Discovers candidate file paths relevant to an issue based on keyword matching across the repository tree.
+   * Returns up to 8 candidate paths and records whether tree was truncated.
+   */
+  async findCandidatePaths(
+    ownerParam?: string,
+    repoParam?: string,
+    keywords: string[] = [],
+    ref = 'main'
+  ): Promise<{ candidatePaths: string[]; truncated: boolean }> {
+    const { tree, truncated } = await this.fetchRepositoryTree(ownerParam, repoParam, ref, true);
+
+    if (!tree || tree.length === 0) {
+      return { candidatePaths: [], truncated };
+    }
+
+    const sanitizedKeywords = keywords
+      .map((k) => k.toLowerCase().trim().replace(/[^a-z0-9-_./]/g, ''))
+      .filter((k) => k.length >= 3);
+
+    const scoredPaths: { path: string; score: number }[] = [];
+
+    for (const item of tree) {
+      if (item.type !== 'blob') continue;
+      const lowerPath = item.path.toLowerCase();
+
+      let matchScore = 0;
+      for (const kw of sanitizedKeywords) {
+        if (lowerPath.includes(kw)) {
+          matchScore += kw.length;
+        }
+      }
+
+      if (matchScore > 0) {
+        // Boost markdown and documentation files for curriculum/doc issues
+        if (lowerPath.endsWith('.md') || lowerPath.endsWith('.mdx')) {
+          matchScore += 10;
+        }
+        // Boost source files
+        if (lowerPath.endsWith('.ts') || lowerPath.endsWith('.tsx') || lowerPath.endsWith('.js')) {
+          matchScore += 5;
+        }
+        scoredPaths.push({ path: item.path, score: matchScore });
+      }
+    }
+
+    scoredPaths.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+    const topPaths = scoredPaths.slice(0, 8).map((p) => p.path);
+
+    return {
+      candidatePaths: topPaths,
+      truncated,
+    };
   }
 }
 

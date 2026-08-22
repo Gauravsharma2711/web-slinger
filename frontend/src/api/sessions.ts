@@ -5,6 +5,10 @@ import {
   SessionStatusResponse,
   GetSessionIssuesResponse,
   ContextBriefResponse,
+  WorkPlanResponse,
+  PatchDraftResponse,
+  VerificationPlanResponse,
+  CreatePatchDraftInput,
 } from '@web-slinger/shared';
 
 const API_BASE = 'http://localhost:8080/api';
@@ -204,3 +208,242 @@ export async function getContextBrief(
 
   return responseData as ContextBriefResponse;
 }
+
+export interface WorkPlanApiError extends Error {
+  status?: number;
+  data?: WorkPlanResponse;
+}
+
+export async function generateWorkPlan(
+  sessionId: string,
+  issueNumber: number,
+  options?: { owner?: string; repo?: string; ref?: string }
+): Promise<WorkPlanResponse> {
+  const params = new URLSearchParams();
+  if (options?.owner) params.set('owner', options.owner);
+  if (options?.repo) params.set('repo', options.repo);
+  if (options?.ref) params.set('ref', options.ref);
+  const queryString = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/work-plan${queryString}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  let responseData: (WorkPlanResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: WorkPlanApiError = new Error(
+      responseData?.error || `Failed to generate work plan (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as WorkPlanResponse;
+}
+
+export async function getWorkPlan(
+  sessionId: string,
+  issueNumber: number
+): Promise<WorkPlanResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/work-plan`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  let responseData: (WorkPlanResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: WorkPlanApiError = new Error(
+      responseData?.error || `Failed to load work plan (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as WorkPlanResponse;
+}
+
+export interface PatchDraftApiError extends Error {
+  status?: number;
+  data?: PatchDraftResponse;
+}
+
+export async function generatePatchDraft(
+  sessionId: string,
+  issueNumber: number,
+  input: CreatePatchDraftInput
+): Promise<PatchDraftResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/patch-draft`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    }
+  );
+
+  let responseData: (PatchDraftResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: PatchDraftApiError = new Error(
+      responseData?.error || `Failed to generate patch draft (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as PatchDraftResponse;
+}
+
+export async function getPatchDraft(
+  sessionId: string,
+  issueNumber: number,
+  patchId: string
+): Promise<PatchDraftResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/patch-draft/${encodeURIComponent(patchId)}`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  let responseData: (PatchDraftResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: PatchDraftApiError = new Error(
+      responseData?.error || `Failed to load patch draft (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as PatchDraftResponse;
+}
+
+export async function updatePatchDraft(
+  sessionId: string,
+  issueNumber: number,
+  patchId: string,
+  diffContent: string
+): Promise<PatchDraftResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/patch-draft/${encodeURIComponent(patchId)}`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ diffContent }),
+    }
+  );
+
+  let responseData: (PatchDraftResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: PatchDraftApiError = new Error(
+      responseData?.error || `Failed to update patch draft (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as PatchDraftResponse;
+}
+
+export interface VerificationPlanApiError extends Error {
+  status?: number;
+  data?: VerificationPlanResponse;
+}
+
+export async function generateVerificationPlan(
+  sessionId: string,
+  issueNumber: number
+): Promise<VerificationPlanResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/verification-plan`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  let responseData: (VerificationPlanResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: VerificationPlanApiError = new Error(
+      responseData?.error || `Failed to generate verification plan (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as VerificationPlanResponse;
+}
+

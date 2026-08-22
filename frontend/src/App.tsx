@@ -7,13 +7,14 @@ import { EntryCanvas } from './components/EntryCanvas.js';
 import { ResearchCanvas } from './components/ResearchCanvas.js';
 import { IssuesCanvas } from './components/IssuesCanvas.js';
 import { ContextBriefCanvas } from './components/ContextBriefCanvas.js';
+import { WorkbenchCanvas } from './components/WorkbenchCanvas.js';
 import { startResearch, getSessionStatus } from './api/sessions.js';
 
 const SESSION_STORAGE_KEY = 'web-slinger-session-id';
 const VIEW_STORAGE_KEY = 'web-slinger-view';
 const SELECTED_ISSUE_KEY = 'web-slinger-selected-issue';
 
-type ActiveView = 'entry' | 'research' | 'issues' | 'brief';
+type ActiveView = 'entry' | 'research' | 'issues' | 'brief' | 'workbench';
 
 export const App: React.FC = () => {
   const [activeSession, setActiveSession] = useState<SessionDocument | null>(null);
@@ -108,7 +109,9 @@ export const App: React.FC = () => {
 
     if (savedSessionId) {
       fetchStatus(savedSessionId);
-      if (savedView === 'brief' && savedIssueJson) {
+      if (savedView === 'workbench' && savedIssueJson) {
+        setActiveView('workbench');
+      } else if (savedView === 'brief' && savedIssueJson) {
         setActiveView('brief');
       } else if (savedView === 'issues') {
         setActiveView('issues');
@@ -203,6 +206,16 @@ export const App: React.FC = () => {
     setActiveView('brief');
   };
 
+  const handleOpenWorkbench = () => {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'workbench');
+    setActiveView('workbench');
+  };
+
+  const handleBackToBrief = () => {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'brief');
+    setActiveView('brief');
+  };
+
   const handleBackToIssues = () => {
     sessionStorage.setItem(VIEW_STORAGE_KEY, 'issues');
     setActiveView('issues');
@@ -223,7 +236,9 @@ export const App: React.FC = () => {
   // Determine stage label for Header
   let stageLabel = 'ENTRY';
   if (activeSession) {
-    if (activeView === 'brief') {
+    if (activeView === 'workbench') {
+      stageLabel = 'WORKBENCH';
+    } else if (activeView === 'brief') {
       stageLabel = 'CONTEXT BRIEF';
     } else if (activeView === 'issues') {
       stageLabel = 'CANDIDATE ISSUES';
@@ -262,11 +277,19 @@ export const App: React.FC = () => {
   return (
     <AppShell stage={stageLabel}>
       {currentSession ? (
-        activeView === 'brief' && selectedIssue ? (
+        activeView === 'workbench' && selectedIssue ? (
+          <WorkbenchCanvas
+            session={currentSession}
+            issue={selectedIssue}
+            onBackToBrief={handleBackToBrief}
+            onReset={handleResetSession}
+          />
+        ) : activeView === 'brief' && selectedIssue ? (
           <ContextBriefCanvas
             session={currentSession}
             issue={selectedIssue}
             onBackToIssues={handleBackToIssues}
+            onOpenWorkbench={handleOpenWorkbench}
             onReset={handleResetSession}
           />
         ) : activeView === 'issues' ? (

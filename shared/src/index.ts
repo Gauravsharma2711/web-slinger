@@ -5,3 +5,6 @@ export * from './schemas/stack.js';
 export * from './schemas/workflow.js';
 export * from './schemas/issue.js';
 export * from './schemas/contextBrief.js';
+export * from './schemas/workPlan.js';
+export * from './schemas/patchDraft.js';
+export * from './schemas/verificationPlan.js';
