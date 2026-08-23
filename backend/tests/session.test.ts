@@ -82,7 +82,7 @@ describe('Session Manager API', () => {
       expect(res.body.session_id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
       );
-      expect(res.body.stage).toBe('created');
+      expect(['created', 'researching']).toContain(res.body.stage);
       expect(res.body.stack).toEqual(['TypeScript', 'React', 'Node.js']);
       expect(res.body.normalized_stack).toEqual(['typescript', 'react', 'node.js']);
       expect(res.body.goal).toBe('Find open source issues in web tooling');

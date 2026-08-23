@@ -9,6 +9,11 @@ import {
   PatchDraftResponse,
   VerificationPlanResponse,
   CreatePatchDraftInput,
+  VerificationRecord,
+  VerificationRecordsResponse,
+  CreateProofReceiptInput,
+  ProofReceiptResponse,
+  FinalReadinessResponse,
 } from '@web-slinger/shared';
 
 const API_BASE = 'http://localhost:8080/api';
@@ -75,6 +80,41 @@ export async function getSessionStatus(sessionId: string): Promise<SessionStatus
 
   if (!res.ok) {
     let message = 'Failed to fetch session status';
+    try {
+      const err = await res.json();
+      if (err.error) message = err.error;
+    } catch {
+      // Keep fallback
+    }
+    throw new Error(message);
+  }
+
+  return res.json();
+}
+
+export async function selectOpportunity(
+  sessionId: string,
+  input: { companyId?: string; company_id?: string; jobId?: string; job_id?: string; job?: Record<string, unknown> }
+): Promise<{
+  session_id: string;
+  stage: string;
+  selected_company_id?: string;
+  selected_job_id?: string;
+  message: string;
+}> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/select-opportunity`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    }
+  );
+
+  if (!res.ok) {
+    let message = 'Failed to select opportunity';
     try {
       const err = await res.json();
       if (err.error) message = err.error;
@@ -446,4 +486,192 @@ export async function generateVerificationPlan(
 
   return responseData as VerificationPlanResponse;
 }
+
+export interface VerificationRecordsApiError extends Error {
+  status?: number;
+  data?: VerificationRecordsResponse;
+}
+
+export async function getVerificationRecords(
+  sessionId: string,
+  issueNumber: number
+): Promise<VerificationRecordsResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/verification-records`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  let responseData: (VerificationRecordsResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: VerificationRecordsApiError = new Error(
+      responseData?.error || `Failed to fetch verification records (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as VerificationRecordsResponse;
+}
+
+export async function saveVerificationRecords(
+  sessionId: string,
+  issueNumber: number,
+  records: VerificationRecord[]
+): Promise<VerificationRecordsResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/verification-records`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ records }),
+    }
+  );
+
+  let responseData: (VerificationRecordsResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: VerificationRecordsApiError = new Error(
+      responseData?.error || `Failed to save verification records (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as VerificationRecordsResponse;
+}
+
+export interface ProofReceiptApiError extends Error {
+  status?: number;
+  data?: ProofReceiptResponse;
+}
+
+export async function createProofReceipt(
+  sessionId: string,
+  issueNumber: number,
+  input: CreateProofReceiptInput
+): Promise<ProofReceiptResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/proof-receipt`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    }
+  );
+
+  let responseData: (ProofReceiptResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: ProofReceiptApiError = new Error(
+      responseData?.error || `Failed to generate Proof Receipt (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as ProofReceiptResponse;
+}
+
+export async function getProofReceipt(
+  sessionId: string,
+  issueNumber: number
+): Promise<ProofReceiptResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/proof-receipt`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  let responseData: (ProofReceiptResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const error: ProofReceiptApiError = new Error(
+      responseData?.error || `Failed to retrieve Proof Receipt (HTTP ${res.status})`
+    );
+    error.status = res.status;
+    error.data = responseData || undefined;
+    throw error;
+  }
+
+  return responseData as ProofReceiptResponse;
+}
+
+export async function getFinalReadiness(
+  sessionId: string,
+  issueNumber: number
+): Promise<FinalReadinessResponse> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/issues/${encodeURIComponent(
+      issueNumber
+    )}/readiness`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  let responseData: (FinalReadinessResponse & { error?: string }) | null = null;
+  try {
+    responseData = await res.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const message =
+      responseData?.error ||
+      `Failed to retrieve final readiness (HTTP ${res.status})`;
+    throw new Error(message);
+  }
+
+  return responseData as FinalReadinessResponse;
+}
+
 

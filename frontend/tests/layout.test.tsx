@@ -241,6 +241,8 @@ describe('Global AppShell & Content Rail Alignment & Overflow Safety', () => {
           score: 95,
           reasons: ['Matched onboarding label'],
           is_fixture: false,
+          repository_relationship: 'selected_practice_repository',
+          repository_relationship_label: 'Selected practice repository',
         };
 
         globalThis.fetch = vi.fn().mockResolvedValue({
@@ -325,6 +327,8 @@ describe('Global AppShell & Content Rail Alignment & Overflow Safety', () => {
           score: 95,
           reasons: ['Matched onboarding label'],
           is_fixture: false,
+          repository_relationship: 'selected_practice_repository',
+          repository_relationship_label: 'Selected practice repository',
         };
 
         globalThis.fetch = vi.fn().mockResolvedValue({

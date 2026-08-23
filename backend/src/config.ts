@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
+import { getAllCatalogSeedUrls } from '@web-slinger/shared';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -32,20 +34,27 @@ export function computeSha256Fingerprint(val: string): string {
 }
 
 const parseSeedUrls = (raw?: string): string[] => {
-  if (!raw || !raw.trim()) return [];
+  if (!raw || !raw.trim()) return getAllCatalogSeedUrls();
   try {
     if (raw.trim().startsWith('[')) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.map((s) => String(s).trim()).filter(Boolean);
+      if (Array.isArray(parsed)) {
+        const list = parsed.map((s) => String(s).trim()).filter(Boolean);
+        return list.length > 0 ? list : getAllCatalogSeedUrls();
+      }
     }
   } catch {
     // Fall back to comma separation
   }
-  return raw
+  const split = raw
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  return split.length > 0 ? split : getAllCatalogSeedUrls();
 };
+
+const rawDemoMode = (process.env.DEMO_MODE || '').trim().toLowerCase();
+const isDemoMode = rawDemoMode === 'true';
 
 const ConfigSchema = z.object({
   nodeEnv: z.string().default(process.env.NODE_ENV || 'development'),
@@ -55,7 +64,7 @@ const ConfigSchema = z.object({
   geminiModelId: z.string().default(process.env.GEMINI_MODEL_ID || 'gemini-3.7-flash'),
   firestoreCollection: z.string().default(process.env.FIRESTORE_COLLECTION || 'sessions'),
   corsOrigin: z.string().default('http://localhost:5173'),
-  demoMode: z.boolean().default(process.env.DEMO_MODE === 'true'),
+  demoMode: z.boolean().default(isDemoMode),
   brightDataApiToken: z.string().default(process.env.BRIGHT_DATA_API_TOKEN || ''),
   brightDataJobCollectorId: z.string().default(process.env.BRIGHT_DATA_JOB_COLLECTOR_ID || ''),
   researchSeedUrls: z.array(z.string()).default(parseSeedUrls(process.env.RESEARCH_SEED_URLS)),
@@ -78,7 +87,7 @@ export const config = ConfigSchema.parse({
   geminiModelId: process.env.GEMINI_MODEL_ID,
   firestoreCollection: process.env.FIRESTORE_COLLECTION,
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-  demoMode: process.env.DEMO_MODE === 'true',
+  demoMode: isDemoMode,
   brightDataApiToken: process.env.BRIGHT_DATA_API_TOKEN || '',
   brightDataJobCollectorId: process.env.BRIGHT_DATA_JOB_COLLECTOR_ID || '',
   researchSeedUrls: parseSeedUrls(process.env.RESEARCH_SEED_URLS),
@@ -95,6 +104,9 @@ export const config = ConfigSchema.parse({
   useInMemoryRepo:
     process.env.USE_IN_MEMORY_REPO === 'true' || process.env.NODE_ENV === 'test',
 });
+
+// Log demoMode safely at startup (never log raw secrets)
+console.log(`[Config] demoMode: ${config.demoMode}`);
 
 // Immutable typed Bright Data configuration object constructed once at startup
 export interface BrightDataConfig {

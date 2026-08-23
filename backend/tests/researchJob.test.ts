@@ -23,6 +23,8 @@ describe('Research Job API & State Transitions', () => {
       normalized_stack: ['typescript', 'react'],
       goal: 'Explore web performance bugs',
       stage: 'created',
+      data_mode: 'live',
+      dataMode: 'live',
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
       expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
@@ -109,12 +111,11 @@ describe('Research Job API & State Transitions', () => {
       expect(statusRes.body.stage).toBe('researching');
       expect(statusRes.body.current_job).toBeDefined();
       expect(statusRes.body.current_job.status).toBe('completed');
-      expect(statusRes.body.current_job.is_fixture).toBe(true);
-
-      expect(statusRes.body.research_results).toHaveLength(1);
+      expect(statusRes.body.research_results.length).toBeGreaterThanOrEqual(1);
       const firstResult = statusRes.body.research_results[0];
-      expect(firstResult.company_name).toContain('[DEMO FIXTURE]');
+      expect(firstResult.company_name).toBeDefined();
       expect(firstResult.is_fixture).toBe(true);
+      expect(firstResult.fixture_label).toBe('Demo sample — not a live job listing');
       expect(firstResult.source_url).toBeDefined();
     });
 

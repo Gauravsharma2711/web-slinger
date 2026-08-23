@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 import { SessionDocument } from '@web-slinger/shared';
 import { createSession } from '../api/sessions.js';
+import { StageContextPanel } from './StageContextPanel.js';
+import { WhatHappensNext } from './WhatHappensNext.js';
 
 const PRESET_TECHNOLOGIES = [
   'TypeScript',
@@ -53,10 +55,19 @@ export const EntryCanvas: React.FC<EntryCanvasProps> = ({ onSessionCreated }) =>
     setIsSubmitting(true);
     setErrorMessage(null);
 
+    const isExplicitDemo =
+      (typeof window !== 'undefined' &&
+        ((window as unknown as { __DEMO_MODE__?: boolean }).__DEMO_MODE__ === true ||
+          window.location.search.includes('demo=true') ||
+          window.localStorage.getItem('DEMO_MODE') === 'true')) ||
+      (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+        ?.VITE_DEMO_MODE === 'true';
+
     try {
       const session = await createSession({
         stack: selectedChips.slice(0, 5),
         goal: goalInput.trim() ? goalInput.trim().slice(0, 280) : undefined,
+        mode: isExplicitDemo ? 'demo' : 'live',
       });
       onSessionCreated(session);
     } catch (err: unknown) {
@@ -71,11 +82,17 @@ export const EntryCanvas: React.FC<EntryCanvasProps> = ({ onSessionCreated }) =>
 
   return (
     <div className="ws-page-canvas">
-      <h1 className="ws-prompt-heading">What stack are you targeting?</h1>
+      <h1 className="ws-prompt-heading">What stack are you exploring?</h1>
       <p className="ws-prompt-description">
-        Select 1 to 5 technologies and optionally describe your contribution goal. Web-Slinger
-        will initialize a session to research public opportunities and matching GitHub issues.
+        Select 1 to 5 technologies. Web-Slinger will find matching public engineering opportunities
+        and candidate open-source issues.
       </p>
+
+      <StageContextPanel
+        stage="Discover"
+        stack={selectedChips}
+        customExplanation="Searching public developer job descriptions for matching stack requirements and verified repository links."
+      />
 
       <div className="ws-chip-group" role="group" aria-label="Preset technologies">
         {PRESET_TECHNOLOGIES.map((tech) => {
@@ -111,16 +128,12 @@ export const EntryCanvas: React.FC<EntryCanvasProps> = ({ onSessionCreated }) =>
           }}
         />
         {errorMessage && (
-          <p
-            style={{
-              margin: 'var(--ws-space-1) 0 0 0',
-              color: 'var(--ws-danger)',
-              fontSize: '13px',
-            }}
-            role="alert"
-          >
-            {errorMessage}
-          </p>
+          <div className="ws-error-card" role="alert" style={{ marginTop: 'var(--ws-space-3)' }}>
+            <div className="ws-error-title">Unable to create session</div>
+            <p className="ws-error-body"><strong>What happened:</strong> {errorMessage}</p>
+            <p className="ws-error-body"><strong>What is saved:</strong> Your selected technologies are preserved.</p>
+            <p className="ws-error-body"><strong>Next action:</strong> Please check your connection and click Find opportunities again.</p>
+          </div>
         )}
       </div>
 
@@ -146,9 +159,18 @@ export const EntryCanvas: React.FC<EntryCanvasProps> = ({ onSessionCreated }) =>
         )}
       </div>
 
-      <div className="ws-footer-note">
-        SESSION SCOPED • EVIDENCE GROUNDED • HUMAN VERIFIED
-      </div>
+      <WhatHappensNext
+        stepName="Choose"
+        description="After creating your session, Web-Slinger searches live job descriptions and ranks the top 5 matching opportunities."
+      />
+
+      <details className="ws-details-section">
+        <summary className="ws-details-summary">Details</summary>
+        <div className="ws-details-content">
+          <div>Session-scoped • Evidence-grounded • Human-verified</div>
+        </div>
+      </details>
     </div>
   );
 };
+

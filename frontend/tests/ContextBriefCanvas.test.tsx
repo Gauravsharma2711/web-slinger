@@ -46,6 +46,8 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
     score: 95,
     reasons: ['Configured onboarding label', 'High context'],
     is_fixture: false,
+    repository_relationship: 'selected_practice_repository',
+    repository_relationship_label: 'Selected practice repository',
   };
 
   const mockValidBrief: ContextBriefResponse = {
@@ -121,7 +123,7 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
     );
 
     expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(screen.getByText('Generating context brief.')).toBeInTheDocument();
+    expect(screen.getByText('Generating evidence-grounded brief...')).toBeInTheDocument();
   });
 
   it('renders completed valid brief in exact required section order with exact mandatory notice and actions', async () => {
@@ -129,24 +131,26 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
 
     const onBackMock = vi.fn();
     const onResetMock = vi.fn();
+    const onOpenWorkbenchMock = vi.fn();
 
     render(
       <ContextBriefCanvas
         session={mockSession}
         issue={mockIssue}
+        onOpenWorkbench={onOpenWorkbenchMock}
         onBackToIssues={onBackMock}
         onReset={onResetMock}
       />
     );
 
-    // 1. Evidence label
+    // Dominant question
     await waitFor(() => {
-      expect(screen.getByText(/SOURCE-GROUNDED CONTEXT BRIEF/i)).toBeInTheDocument();
+      expect(screen.getByText('What is this issue about and what should you verify?')).toBeInTheDocument();
     });
 
     // 2. Issue Title & Number
     expect(screen.getByText('#69622')).toBeInTheDocument();
-    expect(screen.getByText(/fs lesson incorrectly states that every method has a synchronous version/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/fs lesson incorrectly states that every method has a synchronous version/i)[0]).toBeInTheDocument();
 
     // 3. Source GitHub link
     const ghLink = screen.getByRole('link', { name: /View issue #69622 on GitHub/i });
@@ -174,7 +178,7 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
 
     // 9. Source Citations
     expect(screen.getByRole('heading', { name: 'Source Citations' })).toBeInTheDocument();
-    expect(screen.getByText('The lesson claims every method has a synchronous form.')).toBeInTheDocument();
+    expect(screen.getAllByText('The lesson claims every method has a synchronous form.')[0]).toBeInTheDocument();
     expect(screen.getByText('[S1]')).toBeInTheDocument();
 
     // Requirement 3: Exact notice
@@ -198,11 +202,9 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
     expect(screen.queryByRole('button', { name: /^Submit$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create pull request/i })).not.toBeInTheDocument();
 
-    // Clicking primary button shows calm workbench unlock notification
+    // Clicking primary button opens workbench
     fireEvent.click(primaryBtn);
-    expect(
-      screen.getByText(/The Staged Workbench \(Context → Proposal → Verification\) unlocks in Day 4/i)
-    ).toBeInTheDocument();
+    expect(onOpenWorkbenchMock).toHaveBeenCalled();
   });
 
   it('renders needs_review state with validation warnings and retry button', async () => {
@@ -229,7 +231,7 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(screen.getByText('Context brief needs review.')).toBeInTheDocument();
+      expect(screen.getByText('Brief needs manual review.')).toBeInTheDocument();
     });
 
     expect(screen.getByText('Cited URL outside allowed source pack: https://malicious.com')).toBeInTheDocument();
@@ -253,10 +255,10 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(screen.getByText('AI model unavailable.')).toBeInTheDocument();
+      expect(screen.getByText('Brief generation paused.')).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: /Retry brief generation/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Retry$/i })).toBeInTheDocument();
   });
 
   it('renders GitHub source unavailable on 404 error with retry button', async () => {
@@ -276,13 +278,13 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(screen.getByText('Source unavailable.')).toBeInTheDocument();
+      expect(screen.getByText('Issue sources unavailable.')).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: /Retry retrieval/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Back to candidate issues/i })[0]).toBeInTheDocument();
   });
 
-  it('renders DEMO_MODE fixture badge and banner when is_fixture is true', async () => {
+  it('renders DEMO_MODE fixture badge in details when is_fixture is true', async () => {
     const mockFixtureBrief: ContextBriefResponse = {
       ...mockValidBrief,
       is_fixture: true,
@@ -300,11 +302,7 @@ describe('ContextBriefCanvas Component & Reading Flow', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText('Demo fixture').length).toBeGreaterThan(0);
+      expect(screen.getByText('Mode: Sample demonstration fixture')).toBeInTheDocument();
     });
-
-    expect(
-      screen.getByText(/Simulated context brief loaded for demonstration. No live Vertex AI call was made./i)
-    ).toBeInTheDocument();
   });
 });

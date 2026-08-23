@@ -73,6 +73,10 @@ export function fromFirestorePatchDraftDocument(
 export interface PatchDraftRepository {
   savePatchDraft(doc: PatchDraftDocument): Promise<PatchDraftDocument>;
   getPatchDraft(sessionId: string, patchId: string): Promise<PatchDraftDocument | null>;
+  getLatestPatchDraftForIssue(
+    sessionId: string,
+    issueNumber: number
+  ): Promise<PatchDraftDocument | null>;
   updatePatchDraftContent(
     sessionId: string,
     patchId: string,
@@ -130,6 +134,28 @@ export class FirestorePatchDraftRepository implements PatchDraftRepository {
     return fromFirestorePatchDraftDocument(doc.data() as Record<string, unknown>);
   }
 
+  async getLatestPatchDraftForIssue(
+    sessionId: string,
+    issueNumber: number
+  ): Promise<PatchDraftDocument | null> {
+    const snapshot = await this.firestore
+      .collection(this.parentCollection)
+      .doc(sessionId)
+      .collection(this.subcollection)
+      .where('issue_number', '==', issueNumber)
+      .get();
+
+    if (snapshot.empty) return null;
+    const docs = snapshot.docs.map((d) =>
+      fromFirestorePatchDraftDocument(d.data() as Record<string, unknown>)
+    );
+    docs.sort(
+      (a, b) =>
+        new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime()
+    );
+    return docs[0] || null;
+  }
+
   async updatePatchDraftContent(
     sessionId: string,
     patchId: string,
@@ -176,6 +202,21 @@ export class InMemoryPatchDraftRepository implements PatchDraftRepository {
       return null;
     }
     return { ...doc };
+  }
+
+  async getLatestPatchDraftForIssue(
+    sessionId: string,
+    issueNumber: number
+  ): Promise<PatchDraftDocument | null> {
+    const matches = Array.from(this.drafts.values()).filter(
+      (d) => d.session_id === sessionId && d.issue_number === issueNumber
+    );
+    if (matches.length === 0) return null;
+    matches.sort(
+      (a, b) =>
+        new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime()
+    );
+    return { ...matches[0] };
   }
 
   async updatePatchDraftContent(

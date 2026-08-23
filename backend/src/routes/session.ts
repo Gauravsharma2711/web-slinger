@@ -12,7 +12,17 @@ import {
   VerificationPlanResponse,
   CreatePatchDraftInputSchema,
   UpdatePatchDraftInputSchema,
+  SaveVerificationRecordsInputSchema,
+  CreateProofReceiptInputSchema,
+  SelectOpportunityInputSchema,
+  determineRepositoryRelationship,
+  findCompanyById,
+  findCompanyByName,
+  getCuratedDemoFixtures,
+  NormalizedJobResult,
+  SessionStage,
 } from '@web-slinger/shared';
+import { config } from '../config.js';
 import {
   SessionRepository,
   createDefaultSessionRepository,
@@ -51,6 +61,10 @@ import {
   VerificationPlanService,
   createDefaultVerificationPlanService,
 } from '../services/verificationPlanService.js';
+import {
+  ProofReceiptService,
+  createDefaultProofReceiptService,
+} from '../services/proofReceiptService.js';
 
 // Bounded runner timeout suitable for real Scraper Studio collections (5+ minutes)
 const RESEARCH_RUNNER_TIMEOUT_MS = 320000;
@@ -80,7 +94,8 @@ export function createSessionRouter(
   contextBriefService: ContextBriefService = createDefaultContextBriefService(),
   workPlanService: WorkPlanService = createDefaultWorkPlanService(),
   patchDraftService: PatchDraftService = createDefaultPatchDraftService(),
-  verificationPlanService: VerificationPlanService = createDefaultVerificationPlanService()
+  verificationPlanService: VerificationPlanService = createDefaultVerificationPlanService(),
+  proofReceiptService: ProofReceiptService = createDefaultProofReceiptService()
 ): Router {
   const router = Router();
 
@@ -97,7 +112,7 @@ export function createSessionRouter(
         return;
       }
 
-      const { stack, goal } = parseResult.data;
+      const { stack, goal, mode } = parseResult.data;
       const normalized_stack = stack.map((s) => s.trim().toLowerCase());
       const normalized_goal = normalizeGoal(goal);
 
@@ -106,15 +121,28 @@ export function createSessionRouter(
       const updated_at = created_at;
       const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
+      const isDemoMode = mode === 'demo' || (mode === undefined && config.demoMode);
+
+      let research_results: NormalizedJobResult[] | undefined = undefined;
+      let stage: SessionStage = 'created';
+
+      if (isDemoMode) {
+        research_results = getCuratedDemoFixtures(stack, normalized_goal) as NormalizedJobResult[];
+        stage = 'researching';
+      }
+
       const sessionDoc: SessionDocument = {
         session_id,
         stack,
         normalized_stack,
         goal: normalized_goal,
-        stage: 'created',
+        stage,
         created_at,
         updated_at,
         expires_at,
+        data_mode: isDemoMode ? 'demo' : 'live',
+        dataMode: isDemoMode ? 'demo' : 'live',
+        research_results,
       };
 
       await sessionRepository.createSession(sessionDoc);
@@ -153,6 +181,24 @@ export function createSessionRouter(
 
         const forceNew = req.query.forceNew === 'true' || req.body?.forceNew === true;
         const existingSnapshotId = !forceNew ? session.snapshot_id ?? null : null;
+
+        // In DEMO_MODE sessions, immediately return completed demo state without triggering live research
+        if (session.data_mode === 'demo' || session.dataMode === 'demo') {
+          const fixtures =
+            session.research_results ||
+            (getCuratedDemoFixtures(session.stack, session.goal) as NormalizedJobResult[]);
+
+          res.status(200).json({
+            job_id: randomUUID(),
+            status: 'completed',
+            stage: 'researching',
+            message: 'Demo mode session ready with curated opportunities.',
+            is_fixture: true,
+            snapshot_id: null,
+            results: fixtures,
+          });
+          return;
+        }
 
         const jobId = randomUUID();
         const nowIso = new Date().toISOString();
@@ -315,6 +361,44 @@ export function createSessionRouter(
           return;
         }
 
+        const isDemo =
+          session.data_mode === 'demo' ||
+          session.dataMode === 'demo';
+
+        if (isDemo) {
+          const fixtures =
+            session.research_results ||
+            (getCuratedDemoFixtures(session.stack, session.goal) as NormalizedJobResult[]);
+
+          const statusResponse: SessionStatusResponse = {
+            session_id: session.session_id,
+            stage: session.stage === 'created' ? 'researching' : session.stage,
+            stack: session.stack,
+            normalized_stack: session.normalized_stack,
+            goal: session.goal,
+            created_at: session.created_at,
+            updated_at: session.updated_at,
+            expires_at: session.expires_at,
+            ttl_seconds_remaining,
+            is_expired: false,
+            data_mode: 'demo',
+            dataMode: 'demo',
+            selected_company_id: session.selected_company_id || session.selectedCompanyId,
+            selectedCompanyId: session.selected_company_id || session.selectedCompanyId,
+            selected_job_id: session.selected_job_id || session.selectedJobId,
+            selectedJobId: session.selected_job_id || session.selectedJobId,
+            selected_job: session.selected_job || session.selectedJob,
+            selectedJob: session.selected_job || session.selectedJob,
+            message: 'Demo mode session ready with curated opportunities.',
+            research_results: fixtures,
+            discovered_issues: session.discovered_issues,
+            health: session.health,
+          };
+
+          res.status(200).json(statusResponse);
+          return;
+        }
+
         // Fetch latest job if present (direct ID lookup if current_job_id exists, else latest query)
         let latestJob: JobRecord | null = null;
         if (session.current_job_id) {
@@ -337,6 +421,8 @@ export function createSessionRouter(
           expires_at: session.expires_at,
           ttl_seconds_remaining,
           is_expired,
+          data_mode: 'live',
+          dataMode: 'live',
           current_job: latestJob
             ? {
                 job_id: latestJob.job_id,
@@ -351,6 +437,12 @@ export function createSessionRouter(
               }
             : undefined,
           snapshot_id: currentSnapshotId,
+          selected_company_id: session.selected_company_id || session.selectedCompanyId,
+          selectedCompanyId: session.selected_company_id || session.selectedCompanyId,
+          selected_job_id: session.selected_job_id || session.selectedJobId,
+          selectedJobId: session.selected_job_id || session.selectedJobId,
+          selected_job: session.selected_job || session.selectedJob,
+          selectedJob: session.selected_job || session.selectedJob,
           message: latestJob
             ? latestJob.status === 'running'
               ? 'Collecting live public job listings. This can take a few minutes.'
@@ -359,7 +451,7 @@ export function createSessionRouter(
           research_results:
             latestJob && (latestJob.status === 'completed' || latestJob.status === 'degraded')
               ? latestJob.results
-              : undefined,
+              : session.research_results,
           discovered_issues: session.discovered_issues,
           health: session.health,
         };
@@ -398,33 +490,94 @@ export function createSessionRouter(
           return;
         }
 
+        const companyId =
+          session.selected_company_id ||
+          session.selectedCompanyId ||
+          session.selected_job?.company_id ||
+          (session as unknown as { selectedJob?: { company_id?: string } })?.selectedJob?.company_id ||
+          (typeof req.query.company_id === 'string' && req.query.company_id.trim()) ||
+          (typeof req.query.company === 'string' && req.query.company.trim()) ||
+          session.research_results?.[0]?.company_id ||
+          session.research_results?.[0]?.company_name;
+
+        const catalogCompany = findCompanyById(companyId) || findCompanyByName(companyId);
+
+        let defaultOwner = gitHubIssuesClient.config.owner;
+        let defaultRepo = gitHubIssuesClient.config.repo;
+
+        if (catalogCompany && catalogCompany.candidateRepositories.length > 0) {
+          const firstCandidate = catalogCompany.candidateRepositories[0];
+          const [catOwner, catRepo] = firstCandidate.split('/');
+          defaultOwner = catOwner || catalogCompany.githubOwner || defaultOwner;
+          defaultRepo = catRepo || defaultRepo;
+        }
+
         const owner =
           (typeof req.query.owner === 'string' && req.query.owner.trim()) ||
-          gitHubIssuesClient.config.owner;
+          defaultOwner;
         const repo =
           (typeof req.query.repo === 'string' && req.query.repo.trim()) ||
-          gitHubIssuesClient.config.repo;
+          defaultRepo;
         const forceRefresh = req.query.forceRefresh === 'true';
 
-        // Return stored fresh data when available rather than repeatedly calling GitHub
-        if (!forceRefresh && session.discovered_issues !== undefined) {
+        // Validate that if a catalog company is identified, the requested repo belongs to its configured repositories
+        if (catalogCompany && catalogCompany.candidateRepositories.length > 0) {
+          const requestedFullRepo = `${owner}/${repo}`.toLowerCase();
+          const isAllowedRepo = catalogCompany.candidateRepositories.some(
+            (r) => r.toLowerCase() === requestedFullRepo
+          );
+          if (!isAllowedRepo) {
+            res.status(400).json({
+              error: `Repository ${owner}/${repo} is not a verified repository for ${catalogCompany.name}.`,
+              session_id: session.session_id,
+              owner,
+              repo,
+              status: 'not_found',
+              message: `Repository ${owner}/${repo} is not a verified repository for ${catalogCompany.name}.`,
+              issues: [],
+              total_count: 0,
+              cached: false,
+              is_fixture: false,
+            });
+            return;
+          }
+        }
+
+        // Return stored fresh data when available for this exact repository rather than repeatedly calling GitHub
+        const cachedMatchingIssues = session.discovered_issues?.filter((i) =>
+          (i.html_url && i.html_url.toLowerCase().includes(`/${owner}/${repo}/`.toLowerCase())) ||
+          (i.source_url && i.source_url.toLowerCase().includes(`/${owner}/${repo}/`.toLowerCase()))
+        );
+
+        if (!forceRefresh && cachedMatchingIssues && cachedMatchingIssues.length > 0) {
+          const companyName = catalogCompany?.name || session.research_results?.[0]?.company_name;
+          const { relationship: cachedRel, label: cachedRelLabel } =
+            determineRepositoryRelationship(
+              owner || '',
+              repo || '',
+              companyName
+            );
+
           const cachedResponse: GetSessionIssuesResponse = {
             session_id: session.session_id,
             owner: owner || 'cached',
             repo: repo || 'cached',
             status: 'cached',
-            message: `Loaded ${session.discovered_issues.length} cached issues for session.`,
-            issues: session.discovered_issues,
-            total_count: session.discovered_issues.length,
+            message: `Loaded ${cachedMatchingIssues.length} cached issues for ${owner}/${repo}.`,
+            issues: cachedMatchingIssues.slice(0, 5),
+            total_count: cachedMatchingIssues.length,
             cached: true,
-            is_fixture: session.discovered_issues.some((i) => i.is_fixture),
+            is_fixture: cachedMatchingIssues.some((i) => i.is_fixture),
+            repository_relationship: cachedRel,
+            repository_relationship_label: cachedRelLabel,
           };
           res.status(200).json(cachedResponse);
           return;
         }
 
         // Fetch live or fixture issues via dedicated client
-        const result = await gitHubIssuesClient.fetchIssues(owner, repo);
+        const companyName = catalogCompany?.name || session.research_results?.[0]?.company_name;
+        const result = await gitHubIssuesClient.fetchIssues(owner, repo, companyName);
 
         // Map GitHub errors honestly
         if (result.status === 'rate_limited') {
@@ -441,6 +594,8 @@ export function createSessionRouter(
             rate_limit_remaining: result.rateLimitRemaining,
             rate_limit_reset: result.rateLimitReset,
             is_fixture: false,
+            repository_relationship: result.repositoryRelationship,
+            repository_relationship_label: result.repositoryRelationshipLabel,
           });
           return;
         }
@@ -459,6 +614,8 @@ export function createSessionRouter(
             rate_limit_remaining: result.rateLimitRemaining,
             rate_limit_reset: result.rateLimitReset,
             is_fixture: false,
+            repository_relationship: result.repositoryRelationship,
+            repository_relationship_label: result.repositoryRelationshipLabel,
           });
           return;
         }
@@ -477,6 +634,8 @@ export function createSessionRouter(
             rate_limit_remaining: result.rateLimitRemaining,
             rate_limit_reset: result.rateLimitReset,
             is_fixture: false,
+            repository_relationship: result.repositoryRelationship,
+            repository_relationship_label: result.repositoryRelationshipLabel,
           });
           return;
         }
@@ -501,6 +660,8 @@ export function createSessionRouter(
           rate_limit_remaining: result.rateLimitRemaining,
           rate_limit_reset: result.rateLimitReset,
           is_fixture: result.isFixture,
+          repository_relationship: result.repositoryRelationship,
+          repository_relationship_label: result.repositoryRelationshipLabel,
         };
 
         res.status(200).json(response);
@@ -557,11 +718,24 @@ export function createSessionRouter(
           return;
         }
 
+        let derivedOwner: string | undefined;
+        let derivedRepo: string | undefined;
+        const targetUrl = selectedIssue.html_url || selectedIssue.source_url;
+        if (targetUrl) {
+          const match = targetUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+          if (match) {
+            derivedOwner = match[1];
+            derivedRepo = match[2];
+          }
+        }
+
         const owner =
           (typeof req.query.owner === 'string' && req.query.owner.trim()) ||
+          derivedOwner ||
           gitHubIssuesClient.config.owner;
         const repo =
           (typeof req.query.repo === 'string' && req.query.repo.trim()) ||
+          derivedRepo ||
           gitHubIssuesClient.config.repo;
 
         // Build bounded source pack
@@ -717,11 +891,24 @@ export function createSessionRouter(
           return;
         }
 
+        let derivedOwner: string | undefined;
+        let derivedRepo: string | undefined;
+        const targetUrl = selectedIssue.html_url || selectedIssue.source_url;
+        if (targetUrl) {
+          const match = targetUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+          if (match) {
+            derivedOwner = match[1];
+            derivedRepo = match[2];
+          }
+        }
+
         const owner =
           (typeof req.query.owner === 'string' && req.query.owner.trim()) ||
+          derivedOwner ||
           gitHubIssuesClient.config.owner;
         const repo =
           (typeof req.query.repo === 'string' && req.query.repo.trim()) ||
+          derivedRepo ||
           gitHubIssuesClient.config.repo;
         const ref =
           (typeof req.query.ref === 'string' && req.query.ref.trim()) || 'main';
@@ -1185,6 +1372,386 @@ export function createSessionRouter(
         };
 
         res.status(200).json(response);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // POST /api/sessions/:sessionId/issues/:issueNumber/verification-records
+  router.post(
+    '/sessions/:sessionId/issues/:issueNumber/verification-records',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawSessionId = Array.isArray(req.params.sessionId)
+          ? req.params.sessionId[0]
+          : req.params.sessionId;
+        const sessionId = rawSessionId.trim();
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found or expired' });
+          return;
+        }
+
+        const now = Date.now();
+        const expiresAt = new Date(session.expires_at).getTime();
+        if (now > expiresAt) {
+          res.status(404).json({ error: 'Session expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const parseResult = SaveVerificationRecordsInputSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          res.status(400).json({
+            error: 'Invalid verification records input',
+            details: parseResult.error.format(),
+          });
+          return;
+        }
+
+        const result = await proofReceiptService.saveVerificationRecords(
+          sessionId,
+          issueNumber,
+          parseResult.data.records
+        );
+
+        res.status(200).json(result);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // GET /api/sessions/:sessionId/issues/:issueNumber/verification-records
+  router.get(
+    '/sessions/:sessionId/issues/:issueNumber/verification-records',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawSessionId = Array.isArray(req.params.sessionId)
+          ? req.params.sessionId[0]
+          : req.params.sessionId;
+        const sessionId = rawSessionId.trim();
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found or expired' });
+          return;
+        }
+
+        const now = Date.now();
+        const expiresAt = new Date(session.expires_at).getTime();
+        if (now > expiresAt) {
+          res.status(404).json({ error: 'Session expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const result = await proofReceiptService.getVerificationRecords(
+          sessionId,
+          issueNumber
+        );
+
+        res.status(200).json(result);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // POST /api/sessions/:sessionId/issues/:issueNumber/proof-receipt
+  router.post(
+    '/sessions/:sessionId/issues/:issueNumber/proof-receipt',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawSessionId = Array.isArray(req.params.sessionId)
+          ? req.params.sessionId[0]
+          : req.params.sessionId;
+        const sessionId = rawSessionId.trim();
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found or expired' });
+          return;
+        }
+
+        const now = Date.now();
+        const expiresAt = new Date(session.expires_at).getTime();
+        if (now > expiresAt) {
+          res.status(404).json({ error: 'Session expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const parseResult = CreateProofReceiptInputSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          res.status(409).json({
+            error:
+              'User attestation is required before generating a Proof Receipt: "I reviewed the source files and patch, applied any change in my own local workspace, and recorded these verification results truthfully."',
+            details: parseResult.error.format(),
+          });
+          return;
+        }
+
+        try {
+          const receipt = await proofReceiptService.createProofReceipt(
+            sessionId,
+            selectedIssue,
+            parseResult.data
+          );
+
+          res.status(200).json(receipt);
+        } catch (err: unknown) {
+          const statusCode =
+            (err as unknown as { statusCode?: number })?.statusCode || 500;
+          const msg = err instanceof Error ? err.message : 'Failed to generate proof receipt';
+          res.status(statusCode).json({ error: msg });
+        }
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // GET /api/sessions/:sessionId/issues/:issueNumber/proof-receipt
+  router.get(
+    '/sessions/:sessionId/issues/:issueNumber/proof-receipt',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawSessionId = Array.isArray(req.params.sessionId)
+          ? req.params.sessionId[0]
+          : req.params.sessionId;
+        const sessionId = rawSessionId.trim();
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found or expired' });
+          return;
+        }
+
+        const now = Date.now();
+        const expiresAt = new Date(session.expires_at).getTime();
+        if (now > expiresAt) {
+          res.status(404).json({ error: 'Session expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const receipt = await proofReceiptService.getProofReceipt(
+          sessionId,
+          issueNumber
+        );
+
+        if (!receipt) {
+          res.status(404).json({
+            error: `No Proof Receipt has been generated for issue #${issueNumber} in this session.`,
+          });
+          return;
+        }
+
+        res.status(200).json(receipt);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // GET /api/sessions/:sessionId/issues/:issueNumber/readiness
+  router.get(
+    '/sessions/:sessionId/issues/:issueNumber/readiness',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawSessionId = Array.isArray(req.params.sessionId)
+          ? req.params.sessionId[0]
+          : req.params.sessionId;
+        const sessionId = rawSessionId.trim();
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found or expired' });
+          return;
+        }
+
+        const now = Date.now();
+        const expiresAt = new Date(session.expires_at).getTime();
+        if (now > expiresAt) {
+          res.status(404).json({ error: 'Session expired' });
+          return;
+        }
+
+        const rawIssueNumber = Array.isArray(req.params.issueNumber)
+          ? req.params.issueNumber[0]
+          : req.params.issueNumber;
+        const issueNumber = parseInt(rawIssueNumber, 10);
+
+        if (isNaN(issueNumber) || issueNumber <= 0) {
+          res.status(400).json({ error: 'Invalid issue number' });
+          return;
+        }
+
+        // Selected-issue authorization
+        const candidateIssues = session.discovered_issues || [];
+        const selectedIssue = candidateIssues.find((i) => i.number === issueNumber);
+
+        if (!selectedIssue) {
+          res.status(404).json({
+            error: `Issue #${issueNumber} is not a candidate issue in this session.`,
+          });
+          return;
+        }
+
+        const readiness = await proofReceiptService.getFinalReadiness(
+          sessionId,
+          selectedIssue
+        );
+
+        res.status(200).json(readiness);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // POST /api/sessions/:sessionId/select-opportunity
+  router.post(
+    '/sessions/:sessionId/select-opportunity',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawSessionId = Array.isArray(req.params.sessionId)
+          ? req.params.sessionId[0]
+          : req.params.sessionId;
+        const sessionId = rawSessionId.trim();
+
+        const session = await sessionRepository.getSession(sessionId);
+        if (!session) {
+          res.status(404).json({ error: 'Session not found or expired' });
+          return;
+        }
+
+        const now = Date.now();
+        const expiresAt = new Date(session.expires_at).getTime();
+        if (now > expiresAt) {
+          res.status(404).json({ error: 'Session expired' });
+          return;
+        }
+
+        const parsed = SelectOpportunityInputSchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({
+            error: 'Invalid select opportunity input',
+            details: parsed.error.issues,
+          });
+          return;
+        }
+
+        const companyId = parsed.data.companyId || parsed.data.company_id;
+        const jobId = parsed.data.jobId || parsed.data.job_id;
+        const selectedJob = parsed.data.job;
+
+        const updatedSession: SessionDocument = {
+          ...session,
+          stage: 'company_selected',
+          selected_company_id: companyId,
+          selectedCompanyId: companyId,
+          selected_job_id: jobId,
+          selectedJobId: jobId,
+          selected_job: selectedJob,
+          selectedJob: selectedJob,
+          updated_at: new Date().toISOString(),
+        };
+
+        await sessionRepository.createSession(updatedSession);
+
+        res.status(200).json({
+          session_id: sessionId,
+          stage: 'company_selected',
+          selected_company_id: companyId,
+          selectedCompanyId: companyId,
+          selected_job_id: jobId,
+          selectedJobId: jobId,
+          message: `Opportunity selected. Next, choose an open-source repository from ${companyId || 'company'}.`,
+        });
       } catch (err) {
         next(err);
       }

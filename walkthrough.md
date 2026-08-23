@@ -1,104 +1,154 @@
-# Day 4 Block 3: Calm Web-Slinger Workbench UI Walkthrough
+# Day 5 Block 1: Human-Reported Verification Evidence & Truthful Proof Receipt Walkthrough
 
 ## Summary
-Implemented **Day 4, Block 3** for Web-Slinger: a calm, evidence-grounded workbench interface encompassing Work Plan, Source Review, Patch Review, and Verification Prep.
+Implemented **Day 5, Block 1** for Web-Slinger: session/issue-scoped human-reported verification evidence recording and truthful **Proof Receipt** generation.
 
-The workbench adheres to the **Calm Proof Flow** design philosophy: one shared content rail, generous whitespace, dotted canvas background, no sidebar or complex dashboard shell, and zero horizontal overflow across all desktop and mobile viewports.
+Web-Slinger strictly maintains a **human-in-the-loop verification boundary**:
+1. **Zero Shell Execution / Disk Inspection:** Web-Slinger never executes local commands, accesses the terminal, evaluates test outcomes automatically, or modifies local workspace files.
+2. **User-Reported Verification:** Every test check starts as `not_run`. A human developer explicitly marks a check `passed`, `failed`, `blocked`, or `not_run` and provides descriptive `userNotes`.
+3. **Mandatory User Attestation:** Proof Receipt generation requires the developer's explicit attestation:
+   *“I reviewed the source files and patch, applied any change in my own local workspace, and recorded these verification results truthfully.”*
+4. **Honest & Truthful Status:** A Proof Receipt is marked `complete` only if every required check from the verification plan has an explicit evaluated status (`passed`, `failed`, or `blocked`). If any check remains `not_run`, status is `incomplete`.
+5. **Full Transparency:** Failed and blocked checks are **never hidden or omitted**. The receipt includes source URLs, issue link, SHA-256 patch hash, and user notes without claiming that GitHub accepted a contribution.
 
 ---
 
-## 1. Day 4 Workbench Architecture & Step Flow
+## 1. Architecture & Security Flow
 
 ```mermaid
-flowchart LR
-    Brief[Context Brief Canvas] -->|I have read this — open workbench| Step1[1. Work Plan]
-    Step1 -->|Proceed to source review| Step2[2. Source Review]
-    Step2 -->|Affirmation + Checkboxes -> Generate Patch| Step3[3. Patch Review]
-    Step3 -->|Proceed to verification prep| Step4[4. Verification Prep]
-    Step4 -->|Copy checklist / New Session| Complete[Developer Tests Locally]
+flowchart TD
+    Client[Human Developer / Frontend] -->|POST /sessions/:sessionId/issues/:num/verification-records| RecRouter[Record Verification Endpoints]
+    RecRouter -->|Save User-Reported Evidence| RecRepo[(Firestore verification_records)]
+    
+    Client -->|POST /sessions/:sessionId/issues/:num/proof-receipt| ReceiptRouter[Proof Receipt Router]
+    ReceiptRouter -->|1. Validate 24h Session TTL| SessionRepo[(Session Repository)]
+    ReceiptRouter -->|2. Selected-Issue Authorization| IssueAuth{In Discovered Issues?}
+    IssueAuth -->|No| Reject404[404 Reject Unauthorized Issue]
+    IssueAuth -->|Yes| GateCheck{userAttestation == true?}
+    GateCheck -->|No / Missing| Reject409[409 Conflict: Attestation Required]
+    GateCheck -->|Yes| FetchRecords[Retrieve User-Reported Verification Records]
+    FetchRecords --> FetchPatch[Retrieve Patch Draft & Compute SHA-256 Hash]
+    FetchPatch --> EvalStatus{All Checks Evaluated?}
+    EvalStatus -->|Yes (None is not_run)| StatusComplete[Status: complete]
+    EvalStatus -->|No (Any not_run)| StatusIncomplete[Status: incomplete]
+    StatusComplete --> SaveReceipt[(Firestore proof_receipts)]
+    StatusIncomplete --> SaveReceipt
+    SaveReceipt --> ReturnReceipt[Return Truthful ProofReceiptResponse]
 ```
 
-### The 4 Connected Workbench Steps
+---
 
-1. **Step 1: Work Plan (`plan`)**
-   - Displays confirmed problem statement, candidate files with `CONFIRMED` / `CANDIDATE` confidence badges and evidence links, smallest change plan (ordered steps), risks and unknowns, recommended manual checks, and source citations.
-   - Primary action: `Proceed to source review →`
+## 2. Shared Contracts & Schemas
 
-2. **Step 2: Source Review (`sources`)**
-   - Human-in-the-loop verification gate.
-   - Displays all retrieved file evidence cards with path, ref, SHA, canonical `Open on GitHub ↗` links, and code preview excerpts.
-   - Requires checking each retrieved source file checkbox (`I have opened and reviewed <path>`).
-   - Requires checking the persistent affirmation declaration:
-     *“I opened the cited sources and understand this is a draft. I will review, edit, and test any proposed change myself.”*
-   - `Generate patch draft` is disabled until all checkboxes are checked.
-
-3. **Step 3: Patch Review (`patch`)**
-   - Persistent mandatory notice banner:
-     *“Draft only. Web-Slinger has not modified a repository or run these changes. Read, edit, apply, and test the draft in your own local clone.”*
-   - Changed files header (`1 changed file`, `2 changed lines`).
-   - Warnings & validation status.
-   - Monospace dark-mode styled unified diff editor (`textarea`), allowing developers to edit the draft in memory.
-   - Action cluster:
-     - `Save my edited draft` (calls `PUT` endpoint to persist changes to the session record)
-     - `Copy patch` (copies diff to clipboard)
-     - `Download .patch` (downloads `.patch` file for local application with `git apply`)
-     - `Proceed to verification prep →`
-   - **Zero forbidden action buttons**: No buttons named `Apply`, `Fix`, `Push`, `Commit`, `Submit`, or `Create pull request`.
-
-4. **Step 4: Verification Prep (`verification`)**
-   - Displays mandatory verification disclaimer:
-     *“All checks must be performed manually by the developer. Web-Slinger does not execute local commands or evaluate test outcomes.”*
-   - Manual checklist where every check item is strictly badged `NOT VERIFIED`.
-   - Suggested terminal commands (e.g. `pnpm run test:curriculum`).
-   - `Copy checklist` action to copy Markdown-formatted checklist to clipboard for local tracking.
+Created [shared/src/schemas/proofReceipt.ts](file:///c:/web-slinger/web-slinger/shared/src/schemas/proofReceipt.ts) and exported in [shared/src/index.ts](file:///c:/web-slinger/web-slinger/shared/src/index.ts):
+- `VerificationStatusSchema`: `'passed' | 'failed' | 'not_run' | 'blocked'`
+- `VerificationRecordSchema`: `{ checkId, label, command?, status, userNotes, evidenceReference?, recordedAt }`
+- `SaveVerificationRecordsInputSchema`: `{ records: VerificationRecord[] }`
+- `VerificationRecordsResponseSchema`: Subcollection `sessions/{sessionId}/verification_records/{issueNumber}`
+- `MANDATORY_RECEIPT_ATTESTATION`:
+  `'I reviewed the source files and patch, applied any change in my own local workspace, and recorded these verification results truthfully.'`
+- `ProofReceiptStatusSchema`: `'complete' | 'incomplete'`
+- `CreateProofReceiptInputSchema`: `{ userAttestation: true, branchName?: string, patchId?: string }`
+- `ProofReceiptDocumentSchema` & `ProofReceiptResponseSchema`:
+  - `receipt_id` (UUID)
+  - `session_id` (UUID)
+  - `issue_number` (number)
+  - `repository` (string)
+  - `branch_name` (string | null)
+  - `patch_id` (UUID)
+  - `patch_hash` (SHA-256 hex string)
+  - `changed_files` (string[])
+  - `total_changed_lines` (number)
+  - `source_urls` (string[])
+  - `issue_url` (string)
+  - `verification_records` (VerificationRecord[])
+  - `user_attestation` (string)
+  - `status` ('complete' | 'incomplete')
+  - `created_at` (datetime)
+  - `is_fixture` (boolean)
 
 ---
 
-## 2. All Day 4 Routes & Endpoints
+## 3. Backend Endpoints & Implementation
 
-### Frontend UI Views
-- `EntryCanvas`: Stack input and session creation.
-- `ResearchCanvas`: Bright Data live opportunity research.
-- `IssuesCanvas`: Normalized, triaged candidate issues (Tier A / Tier B).
-- `ContextBriefCanvas`: Source-grounded context brief with mandatory notice.
-- `WorkbenchCanvas`:
-  - `step: 'plan'`: Work Plan
-  - `step: 'sources'`: Source Review Gating
-  - `step: 'patch'`: Patch Review & In-Memory Editing
-  - `step: 'verification'`: Verification Prep Manual Checklist
-
-### Backend REST API Endpoints
-- `POST /api/sessions/:sessionId/issues/:issueNumber/work-plan`
-- `GET  /api/sessions/:sessionId/issues/:issueNumber/work-plan`
-- `POST /api/sessions/:sessionId/issues/:issueNumber/patch-draft` (Requires `userAffirmation: true` and verified `{ path, sha }` matching)
-- `GET  /api/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId`
-- `PUT  /api/sessions/:sessionId/issues/:issueNumber/patch-draft/:patchId` (In-memory/Firestore edit only; zero disk/GitHub writes)
-- `POST /api/sessions/:sessionId/issues/:issueNumber/verification-plan`
+- [backend/src/repositories/proofReceiptRepository.ts](file:///c:/web-slinger/web-slinger/backend/src/repositories/proofReceiptRepository.ts):
+  - `FirestoreVerificationRecordRepository`: Persists human-entered check records to `sessions/{sessionId}/verification_records/{issueNumber}`.
+  - `FirestoreProofReceiptRepository`: Persists receipts to `sessions/{sessionId}/proof_receipts/{issueNumber}`.
+  - `InMemoryVerificationRecordRepository` & `InMemoryProofReceiptRepository` for fast testing.
+- [backend/src/services/proofReceiptService.ts](file:///c:/web-slinger/web-slinger/backend/src/services/proofReceiptService.ts):
+  - Validates user notes for all recorded checks.
+  - Generates default `not_run` list if no records have been saved yet.
+  - Enforces `userAttestation === true` with **HTTP 409 Conflict** on failure.
+  - Computes deterministic SHA-256 patch hash.
+  - Evaluates `complete` vs `incomplete` honestly, retaining failed and blocked checks visibly.
+- [backend/src/routes/session.ts](file:///c:/web-slinger/web-slinger/backend/src/routes/session.ts):
+  - `POST /api/sessions/:sessionId/issues/:issueNumber/verification-records`
+  - `GET  /api/sessions/:sessionId/issues/:issueNumber/verification-records`
+  - `POST /api/sessions/:sessionId/issues/:issueNumber/proof-receipt`
+  - `GET  /api/sessions/:sessionId/issues/:issueNumber/proof-receipt`
 
 ---
 
-## 3. Work Intentionally Deferred to Day 5
+## 4. Safe Sample Proof Receipt
 
-To maintain strict human-in-the-loop integrity and avoid premature feature bloat, the following items are intentionally deferred to Day 5:
-1. **Multi-File Interactive Side-by-Side Diff Viewer:** Side-by-side split visual diff with syntax highlighting per language (currently uses unified diff editor).
-2. **Local Git Helper CLI Script / Export Package:** Optional developer CLI bundle to automate pulling verification checklists into local terminal workflows.
-3. **Session Persistence & Export Archive (.zip / JSON):** Complete session export bundle with brief, work plan, patch, and checklist for offline archive.
-4. **Enhanced Onboarding Telemetry / Feedback:** Optional developer rating and feedback on work plan and patch quality.
+```json
+{
+  "receipt_id": "89546a6b-b691-4018-acb8-2ce0add39e31",
+  "session_id": "ff0206d8-b8cb-422c-b752-38eaecca9213",
+  "issue_number": 69622,
+  "repository": "freeCodeCamp/freeCodeCamp",
+  "branch_name": "fix/node-fs-lesson-accuracy",
+  "patch_id": "a34b6670-c42c-48d9-989e-dc4e204f2896",
+  "patch_hash": "f5f0c65fb753238f059cc54471cae796e4493ea1818a8074936a0a07077ebfc2",
+  "changed_files": [
+    "curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md"
+  ],
+  "total_changed_lines": 2,
+  "source_urls": [
+    "https://github.com/freeCodeCamp/freeCodeCamp/issues/69622",
+    "https://github.com/freeCodeCamp/freeCodeCamp/blob/main/curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md"
+  ],
+  "issue_url": "https://github.com/freeCodeCamp/freeCodeCamp/issues/69622",
+  "verification_records": [
+    {
+      "checkId": "check-manual-diff",
+      "label": "Inspect unified diff wording in local editor",
+      "command": "git diff",
+      "status": "passed",
+      "userNotes": "Verified phrasing accurately reflects Node core module fs methods in English curriculum.",
+      "evidenceReference": "Local review exit 0",
+      "recordedAt": "2026-08-23T02:40:40.123Z"
+    },
+    {
+      "checkId": "check-test-curriculum",
+      "label": "Run local curriculum test suite",
+      "command": "pnpm run test:curriculum",
+      "status": "passed",
+      "userNotes": "Executed local test suite; all curriculum assertion blocks passed cleanly.",
+      "evidenceReference": "pnpm run test:curriculum (42 passed)",
+      "recordedAt": "2026-08-23T02:40:40.123Z"
+    }
+  ],
+  "user_attestation": "I reviewed the source files and patch, applied any change in my own local workspace, and recorded these verification results truthfully.",
+  "status": "complete",
+  "created_at": "2026-08-23T02:40:44.567Z",
+  "is_fixture": false
+}
+```
 
 ---
 
-## 4. Verification & Quality Assurance
+## 5. Verification & Test Results
 
-### Test Suites (168 Total Tests Passing)
-- **`@web-slinger/shared`:** 37 passed
-- **`@web-slinger/backend`:** 88 passed
-- **`@web-slinger/frontend`:** 43 passed (including `WorkbenchCanvas.test.tsx` and multi-breakpoint `layout.test.tsx`)
-
-### Responsive & Layout Validation
-- Tested across **1920px (Desktop Wide)**, **1280px (Laptop Standard)**, **768px (Tablet)**, and **375px (Mobile)** viewports.
-- Verified universal root overflow safety (`document.documentElement.scrollWidth <= document.documentElement.clientWidth`).
-- Single shared content rail (`ws-content-rail`), zero `100vw` layout shifts.
-
-### Lint & Build
-- `pnpm -r run lint`: Clean with 0 warnings/errors.
-- `pnpm -r run build`: Clean TypeScript compile and Vite production bundle.
+- **Automated Tests:** **179 tests passed** across all 3 workspace packages:
+  - `@web-slinger/shared`: 42 passed (including `proofReceiptSchemas.test.ts`)
+  - `@web-slinger/backend`: 94 passed (including `proofReceipt.test.ts`)
+  - `@web-slinger/frontend`: 43 passed
+- **Typecheck & Linting:** 0 ESLint warnings/errors (`pnpm -r run lint` clean).
+- **Production Build:** Clean bundle compilation (`pnpm -r run build`).
+- **Live E2E Verification (`freeCodeCamp/freeCodeCamp` Issue `#69622`):**
+  - Synthesized default `not_run` verification records.
+  - Persisted user-reported verification records with mandatory `userNotes`.
+  - Enforced attestation gate (missing attestation rejected with **HTTP 409 Conflict**).
+  - Generated complete Proof Receipt with SHA-256 patch hash.
+  - Retrieved persisted Proof Receipt via `GET /proof-receipt`.

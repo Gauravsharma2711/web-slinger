@@ -8,8 +8,10 @@ import {
   WorkPlanResponse,
   PatchDraftResponse,
   VerificationPlanResponse,
+  VerificationRecordsResponse,
+  ProofReceiptResponse,
   MANDATORY_USER_AFFIRMATION,
-  MANDATORY_VERIFICATION_DISCLAIMER,
+  MANDATORY_RECEIPT_ATTESTATION,
 } from '@web-slinger/shared';
 
 describe('WorkbenchCanvas Component & Flow', () => {
@@ -50,6 +52,8 @@ describe('WorkbenchCanvas Component & Flow', () => {
     score: 95,
     reasons: ['Configured onboarding label', 'High context'],
     is_fixture: false,
+    repository_relationship: 'selected_practice_repository',
+    repository_relationship_label: 'Selected practice repository',
   };
 
   const mockWorkPlan: WorkPlanResponse = {
@@ -98,45 +102,41 @@ describe('WorkbenchCanvas Component & Flow', () => {
         ref: 'main',
         sha: 'abc1234567890',
         htmlUrl: 'https://github.com/freeCodeCamp/freeCodeCamp/blob/main/curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md',
+        sizeBytes: 1200,
         retrievedAt: new Date().toISOString(),
-        content: '# Working with Node Core Modules\n\nThe fs module...',
-        sizeBytes: 250,
+        content: '# Node fs Module\nAlmost every method in the fs module has a synchronous version.',
         isTruncated: false,
       },
     ],
-    is_fixture: false,
-    generated_at: new Date().toISOString(),
     model_id: 'gemini-3.7-flash',
     validation_errors: [],
+    generated_at: new Date().toISOString(),
+    is_fixture: false,
   };
 
   const mockPatchDraft: PatchDraftResponse = {
+    patch_id: 'patch-draft-1234',
     session_id: 'session-wb-test-1234',
     issue_number: 69622,
-    patch_id: '49a4ad26-6eee-4e59-a448-9eca4d8c5894',
     status: 'completed',
-    diff_content: `--- a/curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md
-+++ b/curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md
-@@ -10,3 +10,3 @@
--Almost every method in the fs module has a synchronous version.
-+Most common methods in the fs module have synchronous versions.`,
-    changed_files: [
-      'curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md',
-    ],
-    total_changed_lines: 2,
+    diff_content: `--- a/curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md\n+++ b/curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md\n@@ -10,3 +10,3 @@\n-Almost every method in the fs module has a synchronous version.\n+Most common methods in the fs module have synchronous versions.`,
+    user_affirmation: MANDATORY_USER_AFFIRMATION,
+    reviewed_at: new Date().toISOString(),
     reviewed_sources: [
       {
         path: 'curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md',
         sha: 'abc1234567890',
       },
     ],
-    user_affirmation: MANDATORY_USER_AFFIRMATION,
-    reviewed_at: new Date().toISOString(),
-    is_user_edited: false,
-    generated_at: new Date().toISOString(),
+    changed_files: [
+      'curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md',
+    ],
+    total_changed_lines: 2,
     model_id: 'gemini-3.7-flash',
-    warnings: [],
+    generated_at: new Date().toISOString(),
     validation_errors: [],
+    warnings: [],
+    is_user_edited: false,
     is_fixture: false,
   };
 
@@ -146,21 +146,21 @@ describe('WorkbenchCanvas Component & Flow', () => {
     plan: {
       checklist: [
         {
-          id: 'check-1',
+          id: 'check-diff',
           title: 'Review updated curriculum phrasing',
           description: 'Ensure accurate description of Node fs module methods.',
           suggestedCommand: 'git diff',
           status: 'not_verified',
         },
         {
-          id: 'check-2',
+          id: 'check-test',
           title: 'Execute local curriculum tests',
           description: 'Verify markdown structure passes test suite.',
           suggestedCommand: 'pnpm run test:curriculum',
           status: 'not_verified',
         },
       ],
-      disclaimer: MANDATORY_VERIFICATION_DISCLAIMER,
+      disclaimer: 'All checks must be performed manually by the developer.',
       sourceCitations: [
         {
           claim: 'Node fs module accuracy issue',
@@ -173,27 +173,101 @@ describe('WorkbenchCanvas Component & Flow', () => {
     is_fixture: false,
   };
 
+  const mockVerificationRecords: VerificationRecordsResponse = {
+    session_id: 'session-wb-test-1234',
+    issue_number: 69622,
+    records: [
+      {
+        checkId: 'check-diff',
+        label: 'Review updated curriculum phrasing',
+        command: 'git diff',
+        status: 'not_run',
+        userNotes: '',
+        recordedAt: new Date().toISOString(),
+      },
+      {
+        checkId: 'check-test',
+        label: 'Execute local curriculum tests',
+        command: 'pnpm run test:curriculum',
+        status: 'not_run',
+        userNotes: '',
+        recordedAt: new Date().toISOString(),
+      },
+    ],
+    updated_at: new Date().toISOString(),
+    is_fixture: false,
+  };
+
+  const mockProofReceipt: ProofReceiptResponse = {
+    receipt_id: 'receipt-uuid-12345678',
+    session_id: 'session-wb-test-1234',
+    issue_number: 69622,
+    repository: 'freeCodeCamp/freeCodeCamp',
+    branch_name: 'fix/node-fs-lesson',
+    patch_id: 'patch-draft-1234',
+    patch_hash: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+    changed_files: [
+      'curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md',
+    ],
+    total_changed_lines: 2,
+    source_urls: [
+      'https://github.com/freeCodeCamp/freeCodeCamp/issues/69622',
+      'https://github.com/freeCodeCamp/freeCodeCamp/blob/main/curriculum/challenges/english/02-javascript-algorithms-and-data-structures/lecture.md',
+    ],
+    issue_url: 'https://github.com/freeCodeCamp/freeCodeCamp/issues/69622',
+    verification_records: [
+      {
+        checkId: 'check-diff',
+        label: 'Review updated curriculum phrasing',
+        command: 'git diff',
+        status: 'passed',
+        userNotes: 'Inspected phrasing in local VS Code.',
+        evidenceReference: 'Exit 0',
+        recordedAt: new Date().toISOString(),
+      },
+      {
+        checkId: 'check-test',
+        label: 'Execute local curriculum tests',
+        command: 'pnpm run test:curriculum',
+        status: 'failed',
+        userNotes: 'Node 18 vs Node 20 mismatch on local dev setup.',
+        evidenceReference: 'pnpm test exit 1',
+        recordedAt: new Date().toISOString(),
+      },
+    ],
+    user_attestation: MANDATORY_RECEIPT_ATTESTATION,
+    status: 'complete',
+    created_at: new Date().toISOString(),
+    is_fixture: false,
+  };
+
   beforeEach(() => {
-    vi.restoreAllMocks();
     vi.spyOn(api, 'getWorkPlan').mockResolvedValue(mockWorkPlan);
     vi.spyOn(api, 'generateWorkPlan').mockResolvedValue(mockWorkPlan);
     vi.spyOn(api, 'generatePatchDraft').mockResolvedValue(mockPatchDraft);
-    vi.spyOn(api, 'updatePatchDraft').mockResolvedValue({
-      ...mockPatchDraft,
-      is_user_edited: true,
-    });
+    vi.spyOn(api, 'updatePatchDraft').mockResolvedValue(mockPatchDraft);
     vi.spyOn(api, 'generateVerificationPlan').mockResolvedValue(mockVerificationPlan);
+    vi.spyOn(api, 'getVerificationRecords').mockResolvedValue(mockVerificationRecords);
+    vi.spyOn(api, 'saveVerificationRecords').mockImplementation(async (_, __, records) => ({
+      session_id: 'session-wb-test-1234',
+      issue_number: 69622,
+      records,
+      updated_at: new Date().toISOString(),
+      is_fixture: false,
+    }));
+    vi.spyOn(api, 'createProofReceipt').mockResolvedValue(mockProofReceipt);
+    vi.spyOn(api, 'getProofReceipt').mockResolvedValue(mockProofReceipt);
 
     // Mock clipboard
     Object.assign(navigator, {
       clipboard: {
-        writeText: vi.fn().mockImplementation(() => Promise.resolve()),
+        writeText: vi.fn().mockResolvedValue(undefined),
       },
     });
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('renders Step 1: Work Plan with all required sections and confirmed/candidate badges', async () => {
@@ -207,22 +281,20 @@ describe('WorkbenchCanvas Component & Flow', () => {
       />
     );
 
-    // Wait for work plan to load
     await waitFor(() => {
       expect(screen.getByText('1. Confirmed Problem')).toBeDefined();
     });
 
     expect(screen.getByText(mockWorkPlan.plan!.confirmedProblem)).toBeDefined();
-    expect(screen.getByText('CONFIRMED')).toBeDefined();
-    expect(screen.getByText('CANDIDATE')).toBeDefined();
+    expect(screen.getByText('Strong first option')).toBeDefined();
+    expect(screen.getByText('Needs more reading')).toBeDefined();
     expect(screen.getByText('3. Smallest Change Plan')).toBeDefined();
     expect(screen.getByText('4. Risks & Unknowns to Verify')).toBeDefined();
     expect(screen.getByText('5. Recommended Manual Checks')).toBeDefined();
-    expect(screen.getByText('6. Source Citations')).toBeDefined();
-    expect(screen.getByRole('button', { name: /Proceed to source review/i })).toBeDefined();
+    expect(screen.getByText('6. Source Evidence Grounding')).toBeDefined();
   });
 
-  it('enforces human affirmation & source review gate before enabling patch generation in Step 2', async () => {
+  it('renders Step 2: Source Review and keeps patch generation gated until all sources and affirmation are checked', async () => {
     render(
       <WorkbenchCanvas
         session={mockSession}
@@ -234,18 +306,16 @@ describe('WorkbenchCanvas Component & Flow', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Human-in-the-Loop Source Verification')).toBeDefined();
+      expect(screen.getByText('Have you verified the source files before drafting?')).toBeDefined();
     });
 
     const generateBtn = screen.getByRole('button', { name: /Generate patch draft/i });
-    // Button must be disabled initially
     expect(generateBtn.hasAttribute('disabled')).toBe(true);
 
-    // Wait for and check source file checkbox
     const sourceCheckbox = await screen.findByLabelText(/curriculum\/challenges\/english/i);
     fireEvent.click(sourceCheckbox);
 
-    // Still disabled without affirmation
+    // Button should still be disabled until affirmation is checked
     expect(generateBtn.hasAttribute('disabled')).toBe(true);
 
     // Check mandatory affirmation checkbox
@@ -265,7 +335,7 @@ describe('WorkbenchCanvas Component & Flow', () => {
     });
   });
 
-  it('renders Step 3: Patch Review with persistent notice, editable diff, counts, and zero forbidden buttons', async () => {
+  it('renders Step 3: Patch Review with persistent notice, editable diff, and zero forbidden buttons', async () => {
     const { container } = render(
       <WorkbenchCanvas
         session={mockSession}
@@ -277,32 +347,28 @@ describe('WorkbenchCanvas Component & Flow', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Human-in-the-Loop Source Verification')).toBeDefined();
+      expect(screen.getByText('Have you verified the source files before drafting?')).toBeDefined();
     });
 
-    // Wait for source checkbox to be rendered
     const sourceCheckbox = await screen.findByLabelText(/curriculum\/challenges\/english/i);
     fireEvent.click(sourceCheckbox);
     fireEvent.click(screen.getByLabelText(new RegExp(MANDATORY_USER_AFFIRMATION, 'i')));
     fireEvent.click(screen.getByRole('button', { name: /Generate patch draft/i }));
 
     await waitFor(() => {
-      // Exact mandatory notice check
       expect(
         screen.getByText(
-          'Draft only. Web-Slinger has not modified a repository or run these changes. Read, edit, apply, and test the draft in your own local clone.'
+          /Draft only\. Web-Slinger has not modified a repository or run these changes\./i
         )
       ).toBeDefined();
     });
 
-    // Changed file and line counts
-    const patchCounts = container.querySelector('.ws-patch-counts');
-    expect(patchCounts).toBeDefined();
-    expect(patchCounts?.textContent).toContain('1 changed file');
-    expect(patchCounts?.textContent).toContain('2 changed lines');
+    // Check changed lines
+    expect(container.textContent).toContain('1 changed file');
+    expect(container.textContent).toContain('2 changed lines');
 
     // Editable diff textarea
-    const textarea = screen.getByLabelText(/Editable unified diff text/i);
+    const textarea = screen.getByLabelText(/Editable unified diff/i);
     expect(textarea).toBeDefined();
 
     // Action buttons
@@ -324,7 +390,7 @@ describe('WorkbenchCanvas Component & Flow', () => {
     }
   });
 
-  it('renders Step 4: Verification Prep with all items badged Not verified and copy checklist action', async () => {
+  it('renders Step 4: Verification Evidence with prominent notice, default not_run statuses, and human notes input', async () => {
     render(
       <WorkbenchCanvas
         session={mockSession}
@@ -340,22 +406,89 @@ describe('WorkbenchCanvas Component & Flow', () => {
     });
 
     // Navigate to step 4
-    const step4Tab = screen.getByRole('button', { name: /4.*Verification Prep/i });
+    const step4Tab = screen.getByRole('button', { name: /4.*Verification/i });
     fireEvent.click(step4Tab);
 
     await waitFor(() => {
-      expect(screen.getByText(MANDATORY_VERIFICATION_DISCLAIMER)).toBeDefined();
+      // Exact mandatory notice check (Requirement 3)
+      expect(
+        screen.getByText(
+          'Web-Slinger cannot run commands in your local repository. Record only results you personally observed.'
+        )
+      ).toBeDefined();
     });
 
-    // All items badged NOT VERIFIED
-    const notVerifiedBadges = screen.getAllByText('NOT VERIFIED');
-    expect(notVerifiedBadges.length).toBe(2);
+    // Verify checklist items loaded
+    await waitFor(() => {
+      expect(screen.getAllByText('Review updated curriculum phrasing')[0]).toBeDefined();
+      expect(screen.getAllByText('Execute local curriculum tests')[0]).toBeDefined();
+    });
 
-    // Copy checklist button
-    const copyBtn = screen.getByRole('button', { name: /Copy checklist/i });
-    expect(copyBtn).toBeDefined();
-    fireEvent.click(copyBtn);
+    // Change status of first check to Passed
+    const passedBtn = screen.getAllByRole('button', { name: /✓ Passed/i })[0];
+    fireEvent.click(passedBtn);
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalled();
+    // Enter user note (wait for textarea to render or match by label/id)
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Describe your observation/i)).toBeDefined();
+    });
+    const notesInput = screen.getByPlaceholderText(/Describe your observation/i);
+    fireEvent.change(notesInput, {
+      target: { value: 'Verified wording matches Node 20 documentation.' },
+    });
+
+    // Save verification records
+    const saveBtn = screen.getByRole('button', { name: /Save verification records/i });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(api.saveVerificationRecords).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('renders Step 5: Proof Receipt with attestation gate, failed/blocked checks visible, and copy/download actions only', async () => {
+    // Start directly at Step 5
+    vi.spyOn(api, 'getProofReceipt').mockResolvedValue(mockProofReceipt);
+
+    render(
+      <WorkbenchCanvas
+        session={mockSession}
+        issue={mockIssue}
+        initialStep="receipt"
+        onBackToBrief={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/RECEIPT STATUS: COMPLETE/i)).toBeDefined();
+    });
+
+    // Verify Proof Receipt metadata
+    expect(screen.getAllByText('freeCodeCamp/freeCodeCamp')[0]).toBeDefined();
+    expect(screen.getByText(/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/i)).toBeDefined();
+    expect(screen.getByText(new RegExp(MANDATORY_RECEIPT_ATTESTATION, 'i'))).toBeDefined();
+
+    // Verify failed check remains 100% visible
+    expect(screen.getAllByText('FAILED')[0]).toBeDefined();
+    expect(screen.getAllByText(/Node 18 vs Node 20 mismatch/i)[0]).toBeDefined();
+
+    // Verify Copy & Download actions
+    expect(screen.getByRole('button', { name: /Copy receipt \(JSON\)/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Copy receipt \(Markdown\)/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Download receipt \(\.json\)/i })).toBeDefined();
+
+    // Verify ZERO forbidden action buttons
+    const forbiddenButtonNames = [
+      /^apply$/i,
+      /^fix$/i,
+      /^push$/i,
+      /^commit$/i,
+      /^submit$/i,
+      /create pull request/i,
+    ];
+    for (const forbidden of forbiddenButtonNames) {
+      expect(screen.queryByRole('button', { name: forbidden })).toBeNull();
+    }
   });
 });

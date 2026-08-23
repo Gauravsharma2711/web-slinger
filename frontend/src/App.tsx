@@ -3,18 +3,23 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SessionDocument, SessionStatusResponse, NormalizedIssue } from '@web-slinger/shared';
 import { AppShell } from './components/AppShell.js';
+import { type StageName } from './components/ProgressRail.js';
 import { EntryCanvas } from './components/EntryCanvas.js';
 import { ResearchCanvas } from './components/ResearchCanvas.js';
 import { IssuesCanvas } from './components/IssuesCanvas.js';
 import { ContextBriefCanvas } from './components/ContextBriefCanvas.js';
 import { WorkbenchCanvas } from './components/WorkbenchCanvas.js';
-import { startResearch, getSessionStatus } from './api/sessions.js';
+import { VerifyCanvas } from './components/VerifyCanvas.js';
+import { ManualHandoffCanvas } from './components/ManualHandoffCanvas.js';
+import { OpportunitiesCanvas } from './components/OpportunitiesCanvas.js';
+import { startResearch, getSessionStatus, selectOpportunity } from './api/sessions.js';
+import { NormalizedJobResult } from '@web-slinger/shared';
 
 const SESSION_STORAGE_KEY = 'web-slinger-session-id';
 const VIEW_STORAGE_KEY = 'web-slinger-view';
 const SELECTED_ISSUE_KEY = 'web-slinger-selected-issue';
 
-type ActiveView = 'entry' | 'research' | 'issues' | 'brief' | 'workbench';
+type ActiveView = 'entry' | 'research' | 'opportunities' | 'issues' | 'brief' | 'workbench' | 'verify' | 'handoff';
 
 export const App: React.FC = () => {
   const [activeSession, setActiveSession] = useState<SessionDocument | null>(null);
@@ -109,12 +114,18 @@ export const App: React.FC = () => {
 
     if (savedSessionId) {
       fetchStatus(savedSessionId);
-      if (savedView === 'workbench' && savedIssueJson) {
+      if (savedView === 'handoff' && savedIssueJson) {
+        setActiveView('handoff');
+      } else if (savedView === 'verify' && savedIssueJson) {
+        setActiveView('verify');
+      } else if (savedView === 'workbench' && savedIssueJson) {
         setActiveView('workbench');
       } else if (savedView === 'brief' && savedIssueJson) {
         setActiveView('brief');
       } else if (savedView === 'issues') {
         setActiveView('issues');
+      } else if (savedView === 'opportunities') {
+        setActiveView('opportunities');
       } else {
         setActiveView('research');
       }
@@ -142,10 +153,16 @@ export const App: React.FC = () => {
 
   const handleSessionCreated = (session: SessionDocument) => {
     sessionStorage.setItem(SESSION_STORAGE_KEY, session.session_id);
-    sessionStorage.setItem(VIEW_STORAGE_KEY, 'research');
+    const isDemo =
+      session.data_mode === 'demo' ||
+      session.dataMode === 'demo' ||
+      Boolean(session.research_results?.some((r) => r.is_fixture || (r as { isFixture?: boolean }).isFixture));
+
+    const nextView = isDemo ? 'opportunities' : 'research';
+    sessionStorage.setItem(VIEW_STORAGE_KEY, nextView);
     sessionStorage.removeItem(SELECTED_ISSUE_KEY);
     setActiveSession(session);
-    setActiveView('research');
+    setActiveView(nextView);
     setSelectedIssue(null);
     setSessionStatus(null);
     setErrorMessage(null);
@@ -233,60 +250,212 @@ export const App: React.FC = () => {
     setErrorMessage(null);
   };
 
-  // Determine stage label for Header
-  let stageLabel = 'ENTRY';
+  const [workbenchStep, setWorkbenchStep] = useState<'plan' | 'sources' | 'patch' | 'verification' | 'receipt'>('plan');
+
+  // Determine canonical current stage and completed stages for ProgressRail
+  let currentStage: StageName = 'Discover';
+  const completedStages: StageName[] = [];
+
+  const isDemoModeActive =
+    (typeof window !== 'undefined' &&
+      ((window as unknown as { __DEMO_MODE__?: boolean }).__DEMO_MODE__ === true ||
+        window.location.search.includes('demo=true') ||
+        window.localStorage.getItem('DEMO_MODE') === 'true')) ||
+    (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+      ?.VITE_DEMO_MODE === 'true' ||
+    activeSession?.data_mode === 'demo' ||
+    activeSession?.dataMode === 'demo' ||
+    sessionStatus?.data_mode === 'demo' ||
+    sessionStatus?.dataMode === 'demo' ||
+    Boolean(activeSession?.research_results?.some((r) => r.is_fixture || (r as { isFixture?: boolean }).isFixture)) ||
+    Boolean(sessionStatus?.research_results?.some((r) => r.is_fixture || (r as { isFixture?: boolean }).isFixture)) ||
+    Boolean(sessionStatus?.current_job?.is_fixture);
+
   if (activeSession) {
-    if (activeView === 'workbench') {
-      stageLabel = 'WORKBENCH';
-    } else if (activeView === 'brief') {
-      stageLabel = 'CONTEXT BRIEF';
-    } else if (activeView === 'issues') {
-      stageLabel = 'CANDIDATE ISSUES';
-    } else {
-      const jobStatus = sessionStatus?.current_job?.status;
-      if (jobStatus === 'running' || jobStatus === 'queued' || isStartingResearch) {
-        stageLabel = 'RESEARCHING';
-      } else if (jobStatus === 'completed') {
-        stageLabel = 'RESEARCH COMPLETED';
-      } else if (jobStatus === 'degraded' || jobStatus === 'failed') {
-        stageLabel = 'RESEARCH DEGRADED';
+    if (activeView === 'handoff' || activeView === 'verify') {
+      currentStage = 'Verify';
+      completedStages.push('Discover', 'Choose', 'Understand', 'Draft');
+    } else if (activeView === 'workbench') {
+      if (workbenchStep === 'verification' || workbenchStep === 'receipt') {
+        currentStage = 'Verify';
+        completedStages.push('Discover', 'Choose', 'Understand', 'Draft');
       } else {
-        stageLabel = activeSession.stage.toUpperCase();
+        currentStage = 'Draft';
+        completedStages.push('Discover', 'Choose', 'Understand');
+      }
+    } else if (activeView === 'brief') {
+      currentStage = 'Understand';
+      completedStages.push('Discover', 'Choose');
+    } else if (activeView === 'issues') {
+      currentStage = 'Choose';
+      completedStages.push('Discover');
+    } else {
+      const showsResearchCanvas =
+        (!activeSession.research_results?.length &&
+          !sessionStatus?.research_results?.length &&
+          !sessionStatus?.current_job &&
+          !isDemoModeActive) ||
+        isStartingResearch ||
+        sessionStatus?.current_job?.status === 'running' ||
+        sessionStatus?.current_job?.status === 'queued';
+      if (showsResearchCanvas) {
+        currentStage = 'Discover';
+        if (sessionStatus?.current_job?.status === 'completed') {
+          completedStages.push('Discover');
+        }
+      } else {
+        // Opportunities view: single compact rail (AppShell's) at the Choose stage
+        currentStage = 'Choose';
+        completedStages.push('Discover');
       }
     }
   }
 
-  // Combine active session info with latest status stack if restored from storage
-  const currentSession: SessionDocument | null = activeSession
-    ? {
-        ...activeSession,
-        stack:
-          activeSession.stack.length > 0
-            ? activeSession.stack
-            : sessionStatus?.stack || [],
-        normalized_stack:
-          activeSession.normalized_stack.length > 0
-            ? activeSession.normalized_stack
-            : sessionStatus?.normalized_stack || [],
-        goal: activeSession.goal ?? sessionStatus?.goal ?? null,
-        stage: sessionStatus?.stage || activeSession.stage,
-        snapshot_id: sessionStatus?.snapshot_id ?? activeSession.snapshot_id ?? null,
+  const handleNavigateStage = (targetStage: StageName) => {
+    if (targetStage === 'Discover') {
+      if (activeSession) {
+        sessionStorage.setItem(VIEW_STORAGE_KEY, 'research');
+        setActiveView('research');
       }
-    : null;
+    } else if (targetStage === 'Choose') {
+      sessionStorage.setItem(VIEW_STORAGE_KEY, 'issues');
+      setActiveView('issues');
+    } else if (targetStage === 'Understand') {
+      if (selectedIssue) {
+        sessionStorage.setItem(VIEW_STORAGE_KEY, 'brief');
+        setActiveView('brief');
+      }
+    } else if (targetStage === 'Draft') {
+      if (selectedIssue) {
+        setWorkbenchStep('plan');
+        sessionStorage.setItem(VIEW_STORAGE_KEY, 'workbench');
+        setActiveView('workbench');
+      }
+    } else if (targetStage === 'Verify') {
+      if (selectedIssue) {
+        sessionStorage.setItem(VIEW_STORAGE_KEY, 'verify');
+        setActiveView('verify');
+      }
+    }
+  };
+
+  let headerBackHandler: (() => void) | undefined = undefined;
+  let headerBackLabel: string | undefined = undefined;
+
+  if (activeView === 'handoff') {
+    headerBackHandler = () => {
+      sessionStorage.setItem(VIEW_STORAGE_KEY, 'verify');
+      setActiveView('verify');
+    };
+    headerBackLabel = 'Back to verification checks';
+  } else if (activeView === 'verify') {
+    headerBackHandler = () => {
+      sessionStorage.setItem(VIEW_STORAGE_KEY, 'workbench');
+      setActiveView('workbench');
+    };
+    headerBackLabel = 'Back to draft patch';
+  } else if (activeView === 'issues') {
+    headerBackHandler = handleBackToOpportunities;
+    headerBackLabel = 'Back to opportunities';
+  } else if (activeView === 'brief') {
+    headerBackHandler = handleBackToIssues;
+    headerBackLabel = 'Back to candidate issues';
+  } else if (activeView === 'workbench') {
+    headerBackHandler = handleBackToBrief;
+    headerBackLabel = 'Back to context brief';
+  }
+
+  const handleSelectOpportunity = async (job: NormalizedJobResult) => {
+    if (!activeSession) return;
+    try {
+      await selectOpportunity(activeSession.session_id, {
+        companyId: job.company_id,
+        jobId: job.job_id,
+        job,
+      });
+      setActiveSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              stage: 'company_selected',
+              selected_company_id: job.company_id,
+              selectedCompanyId: job.company_id,
+              selected_job_id: job.job_id,
+              selectedJobId: job.job_id,
+              selected_job: job,
+              selectedJob: job,
+            }
+          : prev
+      );
+    } catch (err) {
+      console.warn('Failed to persist selected opportunity:', err);
+    }
+  };
+
+  const handleProceedToRepositories = (): void => {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, 'issues');
+    setActiveView('issues');
+  };
+
+  const handleCheckExistingResearch = () => {
+    if (activeSession) {
+      fetchStatus(activeSession.session_id);
+    }
+  };
 
   return (
-    <AppShell stage={stageLabel}>
-      {currentSession ? (
-        activeView === 'workbench' && selectedIssue ? (
-          <WorkbenchCanvas
-            session={currentSession}
+    <AppShell
+      stage={currentStage}
+      currentStage={currentStage}
+      completedStages={completedStages}
+      onNavigateStage={handleNavigateStage}
+      onBack={headerBackHandler}
+      backLabel={headerBackLabel}
+    >
+      {activeSession ? (
+        activeView === 'handoff' && selectedIssue ? (
+          <ManualHandoffCanvas
+            session={activeSession}
             issue={selectedIssue}
+            onBackToVerify={() => {
+              sessionStorage.setItem(VIEW_STORAGE_KEY, 'verify');
+              setActiveView('verify');
+            }}
+            onBackToDraft={() => {
+              sessionStorage.setItem(VIEW_STORAGE_KEY, 'workbench');
+              setActiveView('workbench');
+            }}
+            onReset={handleResetSession}
+          />
+        ) : activeView === 'verify' && selectedIssue ? (
+          <VerifyCanvas
+            session={activeSession}
+            issue={selectedIssue}
+            onPrepareHandoff={() => {
+              sessionStorage.setItem(VIEW_STORAGE_KEY, 'handoff');
+              setActiveView('handoff');
+            }}
+            onBackToDraft={() => {
+              sessionStorage.setItem(VIEW_STORAGE_KEY, 'workbench');
+              setActiveView('workbench');
+            }}
+            onReset={handleResetSession}
+          />
+        ) : activeView === 'workbench' && selectedIssue ? (
+          <WorkbenchCanvas
+            session={activeSession}
+            issue={selectedIssue}
+            onStepChange={setWorkbenchStep}
             onBackToBrief={handleBackToBrief}
+            onContinueToVerify={() => {
+              sessionStorage.setItem(VIEW_STORAGE_KEY, 'verify');
+              setActiveView('verify');
+            }}
             onReset={handleResetSession}
           />
         ) : activeView === 'brief' && selectedIssue ? (
           <ContextBriefCanvas
-            session={currentSession}
+            session={activeSession}
             issue={selectedIssue}
             onBackToIssues={handleBackToIssues}
             onOpenWorkbench={handleOpenWorkbench}
@@ -294,21 +463,46 @@ export const App: React.FC = () => {
           />
         ) : activeView === 'issues' ? (
           <IssuesCanvas
-            session={currentSession}
+            session={activeSession}
             onBackToOpportunities={handleBackToOpportunities}
             onSelectIssue={handleSelectIssue}
             onReset={handleResetSession}
           />
-        ) : (
+        ) : activeView === 'opportunities' || (isDemoModeActive && activeView === 'research') ? (
+          <OpportunitiesCanvas
+            session={activeSession}
+            sessionStatus={sessionStatus}
+            isDemoMode={isDemoModeActive}
+            onSelectOpportunity={handleSelectOpportunity}
+            onProceedToRepositories={handleProceedToRepositories}
+            onCheckExistingResearch={handleCheckExistingResearch}
+            onReset={handleResetSession}
+            errorMessage={errorMessage}
+          />
+        ) : (!activeSession.research_results?.length && !sessionStatus?.research_results?.length && !sessionStatus?.current_job && !isDemoModeActive) ||
+          isStartingResearch ||
+          sessionStatus?.current_job?.status === 'running' ||
+          sessionStatus?.current_job?.status === 'queued' ? (
           <ResearchCanvas
-            session={currentSession}
+            session={activeSession}
             sessionStatus={sessionStatus}
             isStartingResearch={isStartingResearch}
             errorMessage={errorMessage}
             onStartResearch={() => handleStartResearch(false)}
-            onRetryResearch={(forceNew) => handleStartResearch(forceNew ?? false)}
+            onRetryResearch={() => handleStartResearch(true)}
             onExploreIssues={handleNavigateToIssues}
             onReset={handleResetSession}
+          />
+        ) : (
+          <OpportunitiesCanvas
+            session={activeSession}
+            sessionStatus={sessionStatus}
+            isDemoMode={isDemoModeActive}
+            onSelectOpportunity={handleSelectOpportunity}
+            onProceedToRepositories={handleProceedToRepositories}
+            onCheckExistingResearch={handleCheckExistingResearch}
+            onReset={handleResetSession}
+            errorMessage={errorMessage}
           />
         )
       ) : (

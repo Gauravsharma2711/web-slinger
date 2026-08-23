@@ -8,3 +8,6 @@ export * from './schemas/contextBrief.js';
 export * from './schemas/workPlan.js';
 export * from './schemas/patchDraft.js';
 export * from './schemas/verificationPlan.js';
+export * from './schemas/proofReceipt.js';
+export * from './schemas/companyCatalog.js';
+

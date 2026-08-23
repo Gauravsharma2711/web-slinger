@@ -2,20 +2,39 @@
 
 import React from 'react';
 
-interface HeaderProps {
+export interface HeaderProps {
   stage?: string;
+  onBack?: () => void;
+  backLabel?: string;
 }
 
-export const Header: React.FC<HeaderProps> = ({ stage = 'ENTRY' }) => {
+export const Header: React.FC<HeaderProps> = ({
+  stage = 'Discover',
+  onBack,
+  backLabel = 'Back',
+}) => {
   return (
     <header className="ws-header" role="banner">
       <div className="ws-header-inner">
-        <a href="/" className="ws-header-brand" aria-label="Web-Slinger home">
-          <div className="ws-mark" aria-hidden="true">
-            <div className="ws-mark-glyph" />
-          </div>
-          <span className="ws-wordmark">Web-Slinger</span>
-        </a>
+        <div className="ws-header-left">
+          <a href="/" className="ws-header-brand" aria-label="Web-Slinger home">
+            <div className="ws-mark" aria-hidden="true">
+              <div className="ws-mark-glyph" />
+            </div>
+            <span className="ws-wordmark">Web-Slinger</span>
+          </a>
+
+          {onBack && (
+            <button
+              type="button"
+              className="ws-header-back-btn"
+              onClick={onBack}
+              aria-label={`Go back to ${backLabel}`}
+            >
+              ← {backLabel}
+            </button>
+          )}
+        </div>
 
         <div className="ws-header-right">
           <span className="ws-stage-badge" aria-label={`Current stage: ${stage}`}>

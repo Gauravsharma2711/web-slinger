@@ -12,6 +12,7 @@ import { ContextBriefService } from './services/contextBriefService.js';
 import { WorkPlanService } from './services/workPlanService.js';
 import { PatchDraftService } from './services/patchDraftService.js';
 import { VerificationPlanService } from './services/verificationPlanService.js';
+import { ProofReceiptService } from './services/proofReceiptService.js';
 
 export function createApp(
   sessionRepository?: SessionRepository,
@@ -22,7 +23,8 @@ export function createApp(
   contextBriefService?: ContextBriefService,
   workPlanService?: WorkPlanService,
   patchDraftService?: PatchDraftService,
-  verificationPlanService?: VerificationPlanService
+  verificationPlanService?: VerificationPlanService,
+  proofReceiptService?: ProofReceiptService
 ): express.Application {
   const app = express();
 
@@ -63,7 +65,8 @@ export function createApp(
       contextBriefService,
       workPlanService,
       patchDraftService,
-      verificationPlanService
+      verificationPlanService,
+      proofReceiptService
     )
   );
 

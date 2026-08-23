@@ -11,6 +11,9 @@ import {
   generateContextBrief,
   ContextBriefApiError,
 } from '../api/sessions.js';
+import { StageContextPanel } from './StageContextPanel.js';
+import { EvidenceTrail, EvidenceItem } from './EvidenceTrail.js';
+import { WhatHappensNext } from './WhatHappensNext.js';
 
 export interface ContextBriefCanvasProps {
   session: SessionDocument;
@@ -109,6 +112,22 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
   const brief = briefResponse?.brief;
   const isFixture = briefResponse?.is_fixture || issue.is_fixture;
 
+  // Build real evidence items from brief citations & issue
+  const evidenceItems: EvidenceItem[] = [
+    {
+      type: 'issue',
+      label: `#${issue.number} • ${issue.title}`,
+      detail: issue.repository_relationship_label || 'Issue report',
+      url: issue.html_url,
+    },
+    ...(brief?.sourceCitations || []).map((c, idx) => ({
+      type: 'guide' as const,
+      label: `Citation S${idx + 1}`,
+      detail: c.claim,
+      url: c.sourceUrl,
+    })),
+  ];
+
   return (
     <div className="ws-page-canvas">
       {/* Session Meta Header Bar */}
@@ -118,7 +137,7 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
             type="button"
             className="ws-back-button"
             onClick={onBackToIssues}
-            aria-label="Back to candidate issues list"
+            aria-label="Back to candidate issues"
           >
             ← Back to candidate issues
           </button>
@@ -130,41 +149,60 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
             ))}
           </div>
         </div>
-        <span className="ws-session-indicator">
-          SESSION ACTIVE • ID: {session.session_id.slice(0, 8)}... • 24H TTL
-        </span>
+        <details className="ws-details-section" style={{ margin: 0, width: 'auto' }}>
+          <summary className="ws-details-summary">Details</summary>
+          <div className="ws-details-content">
+            <div>Session ID: {session.session_id}</div>
+            <div>Valid for: 24 hours</div>
+          </div>
+        </details>
       </div>
 
-      {/* 1. LOADING / GENERATING STATE */}
+      {/* 1. LOADING STATE */}
       {isLoading && (
         <div role="status" aria-live="polite">
-          <h1 className="ws-prompt-heading">Generating context brief.</h1>
+          <h1 className="ws-prompt-heading">Generating evidence-grounded brief...</h1>
           <div className="ws-status-block">
             <div className="ws-status-indicator" />
             <p className="ws-status-sentence">
-              Retrieving issue #{issue.number}, recent comments, and repository guidelines to synthesize
-              an evidence-grounded brief...
+              Analyzing issue #{issue.number}, repository guidelines, and source constraints...
             </p>
           </div>
         </div>
       )}
 
-      {/* 2. VERTEX UNAVAILABLE STATE */}
+      {/* 2. VERTEX AI / MODEL GENERATION ERROR */}
       {!isLoading && isVertexError && (
         <div role="alert">
-          <h1 className="ws-prompt-heading">AI model unavailable.</h1>
-          <p className="ws-prompt-description">
-            {errorMessage ||
-              'The Vertex AI model service encountered a temporary connection issue. Your session data is preserved.'}
-          </p>
+          <h1 className="ws-prompt-heading">Brief generation paused.</h1>
+          <div className="ws-error-card">
+            <div className="ws-error-title">AI model unavailable</div>
+            <p className="ws-error-body">
+              <strong>What happened:</strong> {errorMessage || 'The AI service encountered an issue generating the brief.'}
+            </p>
+            <p className="ws-error-body">
+              <strong>What is saved:</strong> Your candidate issue selection and research session are preserved.
+            </p>
+            <p className="ws-error-body">
+              <strong>Next action:</strong> Click Retry to attempt generating the brief again, or view the issue on GitHub.
+            </p>
+          </div>
           <div className="ws-actions">
             <button
               type="button"
               className="ws-button-primary"
               onClick={() => loadOrGenerateBrief(true)}
             >
-              Retry brief generation
+              Retry
             </button>
+            <a
+              href={issue.html_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ws-button-secondary"
+            >
+              View on GitHub ↗
+            </a>
             <button
               type="button"
               className="ws-button-secondary"
@@ -176,53 +214,71 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
         </div>
       )}
 
-      {/* 3. GITHUB SOURCE UNAVAILABLE STATE */}
+      {/* 3. SOURCE RETRIEVAL ERROR (404) */}
       {!isLoading && !isVertexError && isSourceUnavailable && (
         <div role="alert">
-          <h1 className="ws-prompt-heading">Source unavailable.</h1>
-          <p className="ws-prompt-description">
-            {errorMessage ||
-              `Could not retrieve public issue #${issue.number} or related repository documentation from GitHub.`}
-          </p>
+          <h1 className="ws-prompt-heading">Issue sources unavailable.</h1>
+          <div className="ws-error-card">
+            <div className="ws-error-title">Source not found</div>
+            <p className="ws-error-body">
+              <strong>What happened:</strong> {errorMessage || `Issue #${issue.number} could not be retrieved from GitHub.`}
+            </p>
+            <p className="ws-error-body">
+              <strong>What is saved:</strong> Your session and chosen stack are saved.
+            </p>
+            <p className="ws-error-body">
+              <strong>Next action:</strong> Return to candidate issues to select another option.
+            </p>
+          </div>
           <div className="ws-actions">
             <button
               type="button"
               className="ws-button-primary"
-              onClick={() => loadOrGenerateBrief(true)}
+              onClick={onBackToIssues}
             >
-              Retry retrieval
+              Back to candidate issues
             </button>
             <button
               type="button"
               className="ws-button-secondary"
-              onClick={onBackToIssues}
+              onClick={onReset}
             >
-              Back to candidate issues
+              New session
             </button>
           </div>
         </div>
       )}
 
-      {/* 4. NEEDS REVIEW STATE */}
+      {/* 4. VALIDATION ERROR / NEEDS REVIEW STATE */}
       {!isLoading && !isVertexError && !isSourceUnavailable && isNeedsReview && !brief && (
         <div role="alert">
-          <h1 className="ws-prompt-heading">Context brief needs review.</h1>
-          <p className="ws-prompt-description">
-            The generated brief contained unverified assertions, missing citations, or could not be
-            strictly validated against the source pack.
-          </p>
+          <h1 className="ws-prompt-heading">Brief needs manual review.</h1>
+          <div className="ws-error-card">
+            <div className="ws-error-title">Validation review required</div>
+            <p className="ws-error-body">
+              <strong>What happened:</strong> {errorMessage || 'The generated brief did not pass all ground truth verification checks.'}
+            </p>
+            <p className="ws-error-body">
+              <strong>What is saved:</strong> Your candidate issue selection is saved.
+            </p>
+            <p className="ws-error-body">
+              <strong>Next action:</strong> Click Regenerate brief to produce a validated brief.
+            </p>
+          </div>
 
           {briefResponse?.validation_errors && briefResponse.validation_errors.length > 0 && (
-            <div className="ws-issue-reasons-box" style={{ marginBottom: 'var(--ws-space-6)' }}>
-              <span className="ws-reasons-heading">Validation Warnings</span>
-              <ul className="ws-reasons-list">
-                {briefResponse.validation_errors.map((err, idx) => (
-                  <li key={idx} className="ws-reason-item">
-                    {err}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <details className="ws-details-section" style={{ marginBottom: 'var(--ws-space-6)' }}>
+              <summary className="ws-details-summary">Details</summary>
+              <div className="ws-details-content">
+                <ul className="ws-reasons-list">
+                  {briefResponse.validation_errors.map((err, idx) => (
+                    <li key={idx} className="ws-reason-item">
+                      {err}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
           )}
 
           <div className="ws-actions">
@@ -247,27 +303,19 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
       {/* 5. SUCCESSFUL / VALID CONTEXT BRIEF DISPLAY */}
       {!isLoading && !isVertexError && !isSourceUnavailable && brief && (
         <div className="ws-brief-container">
-          {/* Fixture Mode Alert Banner */}
-          {isFixture && (
-            <div className="ws-fixture-banner" role="status">
-              <span className="ws-fixture-badge">Demo fixture</span>
-              <span>
-                Simulated context brief loaded for demonstration. No live Vertex AI call was made.
-              </span>
-            </div>
-          )}
+          {/* Dominant Question Heading */}
+          <h1 className="ws-prompt-heading">
+            What is this issue about and what should you verify?
+          </h1>
 
-          {/* Validation Notice if partially degraded but brief readable */}
-          {isNeedsReview && (
-            <div className="ws-fixture-banner" style={{ borderColor: 'var(--ws-warning)' }} role="status">
-              <span className="ws-fixture-badge">Needs human review</span>
-              <span>
-                Some citations or links require verification. Read source documents carefully.
-              </span>
-            </div>
-          )}
+          <StageContextPanel
+            stage="Understand"
+            relationshipLabel={issue.repository_relationship_label || 'Selected practice repository'}
+            sourceCount={brief.sourceCitations?.length || briefResponse?.sources?.length || 1}
+            customExplanation="Decide whether this issue scope and cited guidance match your goals before opening the workbench."
+          />
 
-          {/* Workbench Acknowledgment Notice */}
+          {/* Workbench Message if triggered */}
           {workbenchMessage && (
             <div className="ws-notice-banner" role="status" aria-live="polite">
               <span className="ws-notice-dot" />
@@ -275,32 +323,35 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
             </div>
           )}
 
-          {/* Item 1: Evidence Label */}
-          <div className="ws-brief-meta-row">
-            <span className="ws-brief-evidence-badge">
-              SOURCE-GROUNDED CONTEXT BRIEF • {briefResponse?.model_id || 'GEMINI 3.7 FLASH'} •{' '}
-              {briefResponse?.sources.length ?? 1} SOURCES CITED
-            </span>
-            {isFixture && <span className="ws-fixture-badge">Demo fixture</span>}
+          {/* Issue Header Info Box */}
+          <div className="ws-issue-card" style={{ marginBottom: 'var(--ws-space-6)' }}>
+            <div className="ws-issue-card-header">
+              <div className="ws-issue-card-header-left">
+                <span className="ws-issue-number">#{issue.number}</span>
+                <span className="ws-issue-repo">{session.research_results?.[0]?.company_name ? `${session.research_results[0].company_name} • ` : ''}Practice Issue</span>
+              </div>
+              <a
+                href={issue.html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ws-source-link"
+                aria-label={`View issue #${issue.number} on GitHub (opens in new window)`}
+              >
+                View on GitHub ↗
+              </a>
+            </div>
+            <h2 className="ws-issue-card-title">{issue.title}</h2>
           </div>
 
-          {/* Item 2: Issue Title and Number */}
-          <h1 className="ws-prompt-heading" style={{ marginTop: 'var(--ws-space-2)' }}>
-            <span className="ws-issue-number">#{issue.number}</span> {issue.title}
-          </h1>
-
-          {/* Item 3: Source GitHub Link */}
-          <div className="ws-brief-link-row">
-            <a
-              href={issue.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ws-source-link"
-              aria-label={`View issue #${issue.number} on GitHub (opens in new window)`}
-            >
-              View on GitHub ↗
-            </a>
-          </div>
+          {/* Details toggle for technical metadata */}
+          <details className="ws-details-section">
+            <summary className="ws-details-summary">Details</summary>
+            <div className="ws-details-content">
+              <div>Model: {briefResponse?.model_id || 'Gemini'}</div>
+              <div>Sources cited: {briefResponse?.sources.length ?? 1}</div>
+              {isFixture && <div>Mode: Sample demonstration fixture</div>}
+            </div>
+          </details>
 
           {/* Item 4: Summary */}
           <section className="ws-brief-section" aria-labelledby="brief-summary-heading">
@@ -418,7 +469,12 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
             </p>
           </div>
 
-          {/* Action Cluster (Requirement 4) */}
+          <EvidenceTrail
+            items={evidenceItems}
+            title="Brief Evidence Trail"
+          />
+
+          {/* Action Cluster */}
           <div className="ws-actions" style={{ marginTop: 'var(--ws-space-6)' }}>
             <button
               type="button"
@@ -455,6 +511,11 @@ export const ContextBriefCanvas: React.FC<ContextBriefCanvasProps> = ({
               New session
             </button>
           </div>
+
+          <WhatHappensNext
+            stepName="Draft work plan & source review"
+            description="Next: Open the workbench to verify retrieved source files and draft a minimal patch."
+          />
         </div>
       )}
     </div>

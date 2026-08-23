@@ -1,11 +1,12 @@
 import {
   NormalizedJobResult,
   NormalizedJobResultSchema,
-  BrightDataRawRecordSchema,
   CompactHealthRecord,
+  getCuratedDemoFixtures,
 } from '@web-slinger/shared';
 import { config, brightDataConfig } from '../config.js';
 import { BrightDataClient } from './brightDataClient.js';
+import { processAndRankJobRecords, selectDiverseTopJobs } from './jobTriage.js';
 
 export interface ResearchAdapterResult {
   status: 'completed' | 'degraded' | 'failed';
@@ -27,7 +28,7 @@ export interface ResearchAdapter {
 }
 
 /**
- * Fixture research adapter used when DEMO_MODE=true or as fallback during demo mode.
+ * Fixture research adapter for deterministic offline demo mode.
  * Returns clearly labelled fixture results and NEVER calls external services.
  */
 export class FixtureResearchAdapter implements ResearchAdapter {
@@ -36,28 +37,23 @@ export class FixtureResearchAdapter implements ResearchAdapter {
     stack: string[],
     goal?: string | null
   ): Promise<ResearchAdapterResult> {
-    const primaryTech = stack[0] || 'TypeScript';
     const now = new Date().toISOString();
+    const rawFixtures = getCuratedDemoFixtures(stack, goal);
+    const parsedFixtures: NormalizedJobResult[] = [];
 
-    const fixtureResult: NormalizedJobResult = {
-      company_name: `[DEMO FIXTURE] ${primaryTech} Core Labs`,
-      role_title: `Senior ${primaryTech} Platform Engineer`,
-      location: 'Remote (Global)',
-      employment_type: 'Full-time',
-      department: 'Developer Infrastructure',
-      listing_date: '2026-08-20',
-      job_description_excerpt: `[DEMO FIXTURE] Seeking an experienced developer proficient in ${stack.join(
-        ', '
-      )} to contribute to core tooling and public packages.${goal ? ` Goal alignment: ${goal}` : ''}`,
-      source_url: 'https://demo.web-slinger.local/fixtures/jobs/1',
-      collected_at: now,
-      is_fixture: true,
-    };
+    for (const raw of rawFixtures) {
+      const parsed = NormalizedJobResultSchema.safeParse(raw);
+      if (parsed.success) {
+        parsedFixtures.push(parsed.data);
+      }
+    }
+
+    const diverseFixtures = selectDiverseTopJobs(parsedFixtures, 5, 2);
 
     return {
       status: 'completed',
-      results: [fixtureResult],
-      message: 'Fixture research completed with demo results',
+      results: diverseFixtures,
+      message: 'Fixture research completed with curated demo results',
       snapshotId: 'fixture_snapshot_123',
       health: {
         status: 'healthy',
@@ -90,8 +86,8 @@ export class BrightDataResearchAdapter implements ResearchAdapter {
   ): Promise<ResearchAdapterResult> {
     const now = new Date().toISOString();
 
-    // 1. DEMO_MODE: always return clearly labelled fixture result with completed status
-    if (config.demoMode) {
+    // 1. DEMO_MODE fallback when client is unconfigured
+    if (config.demoMode && !this.client.isConfigured) {
       const fixtureRes = await this.fixtureAdapter.executeResearch(sessionId, stack, goal);
       return {
         ...fixtureRes,
@@ -183,75 +179,18 @@ export class BrightDataResearchAdapter implements ResearchAdapter {
       // Step 3: Poll dataset with bounded exponential backoff
       const rawRecords = await this.client.pollSnapshot(collectionId, { sessionId });
 
-      // Step 4, 5, 6: Validate with Zod and normalize approved fields
-      const normalizedResults: NormalizedJobResult[] = [];
+      // Step 4: Normalize, deduplicate, score, and rank records deterministically
+      const { allResults } = processAndRankJobRecords(rawRecords, stack, seedUrls[0]);
 
-      for (const item of rawRecords) {
-        const parseResult = BrightDataRawRecordSchema.safeParse(item);
-        if (!parseResult.success) {
-          continue;
-        }
-
-        const raw = parseResult.data;
-        const companyName =
-          raw.company_name ||
-          raw.company ||
-          raw.employer_name ||
-          raw.organization ||
-          `${stack[0] || 'Tech'} Enterprise`;
-        const roleTitle =
-          raw.role_title ||
-          raw.job_title ||
-          raw.title ||
-          raw.position ||
-          'Software Engineer';
-
-        // Preserve original source URL
-        const sourceUrl =
-          raw.source_url ||
-          raw.url ||
-          raw.link ||
-          raw.apply_url ||
-          seedUrls[0] ||
-          'https://brightdata.com/datasets';
-
-        // Sanitize and slice description excerpt
-        const rawExcerpt =
-          raw.job_description_excerpt ||
-          raw.description ||
-          raw.job_description ||
-          raw.summary ||
-          null;
-        const excerpt = rawExcerpt ? rawExcerpt.slice(0, 500) : null;
-
-        const candidateResult = {
-          company_name: companyName,
-          role_title: roleTitle,
-          location: raw.location ?? raw.job_location ?? null,
-          employment_type: raw.employment_type ?? raw.job_type ?? null,
-          department: raw.department ?? raw.team ?? null,
-          listing_date: raw.listing_date ?? raw.date_posted ?? raw.posted_date ?? null,
-          job_description_excerpt: excerpt,
-          source_url: sourceUrl,
-          collected_at: new Date().toISOString(),
-          is_fixture: false,
-        };
-
-        const validated = NormalizedJobResultSchema.safeParse(candidateResult);
-        if (validated.success) {
-          normalizedResults.push(validated.data);
-        }
-      }
-
-      const hasResults = normalizedResults.length > 0;
+      const hasResults = allResults.length > 0;
       const status: 'completed' | 'degraded' = hasResults ? 'completed' : 'degraded';
       const message = hasResults
-        ? `Successfully collected and normalized ${normalizedResults.length} job opportunities`
+        ? `Successfully collected, ranked, and normalized ${allResults.length} job opportunities`
         : 'Collector completed but returned no matching records for the target stack';
 
       return {
         status,
-        results: normalizedResults,
+        results: allResults,
         message,
         snapshotId: collectionId,
         health: {
@@ -265,8 +204,8 @@ export class BrightDataResearchAdapter implements ResearchAdapter {
       console.warn(`[BrightDataResearchAdapter] Collection degraded/failed: ${errorMsg}`);
 
       // Fallback behavior:
-      // If DEMO_MODE=true: return clearly labelled fixture result
-      if (config.demoMode) {
+      // If DEMO_MODE=true AND client is not configured: return clearly labelled fixture result
+      if (config.demoMode && !this.client.isConfigured) {
         const fixtureRes = await this.fixtureAdapter.executeResearch(sessionId, stack, goal);
         return {
           ...fixtureRes,
@@ -296,9 +235,11 @@ export class BrightDataResearchAdapter implements ResearchAdapter {
   }
 }
 
+import { GrafanaGreenhouseAdapter } from './grafanaGreenhouseAdapter.js';
+
 export function createDefaultResearchAdapter(): ResearchAdapter {
-  if (config.demoMode && !brightDataConfig.isConfigured) {
+  if (config.demoMode) {
     return new FixtureResearchAdapter();
   }
-  return new BrightDataResearchAdapter();
+  return new GrafanaGreenhouseAdapter();
 }

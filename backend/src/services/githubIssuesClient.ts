@@ -3,6 +3,8 @@ import {
   NormalizedIssueSchema,
   GitHubResearchStatus,
   RepositoryFileEvidence,
+  RepositoryRelationship,
+  determineRepositoryRelationship,
 } from '@web-slinger/shared';
 import { githubConfig, GitHubConfig, config } from '../config.js';
 import { triageIssue } from './issueTriage.js';
@@ -17,6 +19,8 @@ export interface GitHubFetchResult {
   rateLimitRemaining?: number | null;
   rateLimitReset?: number | null;
   isFixture: boolean;
+  repositoryRelationship: RepositoryRelationship;
+  repositoryRelationshipLabel: string;
 }
 
 export interface GitHubIssuesClientOptions {
@@ -49,10 +53,17 @@ export class GitHubIssuesClient {
    */
   async fetchIssues(
     ownerParam?: string,
-    repoParam?: string
+    repoParam?: string,
+    companyName?: string | null
   ): Promise<GitHubFetchResult> {
     const owner = (ownerParam || this.activeConfig.owner).trim();
     const repo = (repoParam || this.activeConfig.repo).trim();
+
+    const { relationship: repoRel, label: repoRelLabel } = determineRepositoryRelationship(
+      owner,
+      repo,
+      companyName
+    );
 
     if (!owner || !repo) {
       return {
@@ -63,6 +74,8 @@ export class GitHubIssuesClient {
         issues: [],
         totalCount: 0,
         isFixture: false,
+        repositoryRelationship: repoRel,
+        repositoryRelationshipLabel: repoRelLabel,
       };
     }
 
@@ -94,6 +107,8 @@ export class GitHubIssuesClient {
             'Active discussion with 5 community comments.',
           ],
           is_fixture: true,
+          repository_relationship: repoRel,
+          repository_relationship_label: repoRelLabel,
         },
         {
           id: 100102,
@@ -119,6 +134,8 @@ export class GitHubIssuesClient {
             'Has 2 discussion comments from community.',
           ],
           is_fixture: true,
+          repository_relationship: repoRel,
+          repository_relationship_label: repoRelLabel,
         },
       ];
 
@@ -130,6 +147,8 @@ export class GitHubIssuesClient {
         issues: fixtureIssues,
         totalCount: fixtureIssues.length,
         isFixture: true,
+        repositoryRelationship: repoRel,
+        repositoryRelationshipLabel: repoRelLabel,
       };
     }
 
@@ -202,6 +221,8 @@ export class GitHubIssuesClient {
           rateLimitRemaining,
           rateLimitReset,
           isFixture: false,
+          repositoryRelationship: repoRel,
+          repositoryRelationshipLabel: repoRelLabel,
         };
       }
 
@@ -217,6 +238,8 @@ export class GitHubIssuesClient {
           rateLimitRemaining,
           rateLimitReset,
           isFixture: false,
+          repositoryRelationship: repoRel,
+          repositoryRelationshipLabel: repoRelLabel,
         };
       }
 
@@ -232,6 +255,8 @@ export class GitHubIssuesClient {
           rateLimitRemaining,
           rateLimitReset,
           isFixture: false,
+          repositoryRelationship: repoRel,
+          repositoryRelationshipLabel: repoRelLabel,
         };
       }
 
@@ -249,6 +274,8 @@ export class GitHubIssuesClient {
           rateLimitRemaining,
           rateLimitReset,
           isFixture: false,
+          repositoryRelationship: repoRel,
+          repositoryRelationshipLabel: repoRelLabel,
         };
       }
 
@@ -264,6 +291,8 @@ export class GitHubIssuesClient {
           rateLimitRemaining,
           rateLimitReset,
           isFixture: false,
+          repositoryRelationship: repoRel,
+          repositoryRelationshipLabel: repoRelLabel,
         };
       }
 
@@ -360,6 +389,8 @@ export class GitHubIssuesClient {
           score: triage.score,
           reasons: triage.reasons,
           is_fixture: false,
+          repository_relationship: repoRel,
+          repository_relationship_label: repoRelLabel,
         };
 
         const validated = NormalizedIssueSchema.safeParse(candidateIssue);
@@ -381,21 +412,26 @@ export class GitHubIssuesClient {
         (a, b) => b.score - a.score || b.comments_count - a.comments_count || b.number - a.number
       );
 
+      // Return at most the top 5 issue candidates by default, ordered by the existing deterministic score
+      const topIssues = normalizedIssues.slice(0, 5);
+
       // Safe logging of counts only (never log issue bodies or secrets)
       console.log(
-        `[GitHubIssuesClient] Completed for ${owner}/${repo}: fetched ${rawItems.length} items | retained ${normalizedIssues.length} issues | excluded ${prCount} pull requests`
+        `[GitHubIssuesClient] Completed for ${owner}/${repo}: fetched ${rawItems.length} items | retained ${topIssues.length} top candidates (of ${normalizedIssues.length}) | excluded ${prCount} pull requests`
       );
 
       return {
         owner,
         repo,
         status: 'completed',
-        message: `Successfully discovered ${normalizedIssues.length} open issues from ${owner}/${repo}.`,
-        issues: normalizedIssues,
+        message: `Successfully discovered ${topIssues.length} open candidate issues from ${owner}/${repo}.`,
+        issues: topIssues,
         totalCount: normalizedIssues.length,
         rateLimitRemaining,
         rateLimitReset,
         isFixture: false,
+        repositoryRelationship: repoRel,
+        repositoryRelationshipLabel: repoRelLabel,
       };
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -417,6 +453,8 @@ export class GitHubIssuesClient {
         issues: [],
         totalCount: 0,
         isFixture: false,
+        repositoryRelationship: repoRel,
+        repositoryRelationshipLabel: repoRelLabel,
       };
     }
   }

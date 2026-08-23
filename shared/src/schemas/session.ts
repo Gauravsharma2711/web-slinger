@@ -26,6 +26,7 @@ export const CreateSessionInputSchema = z.object({
     .max(280, 'Goal cannot exceed 280 characters')
     .nullable()
     .optional(),
+  mode: z.enum(['demo', 'live']).optional(),
 });
 
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
@@ -41,6 +42,16 @@ export const CurrentJobInfoSchema = z.object({
 
 export type CurrentJobInfo = z.infer<typeof CurrentJobInfoSchema>;
 
+export const SelectOpportunityInputSchema = z.object({
+  company_id: z.string().optional(),
+  companyId: z.string().optional(),
+  job_id: z.string().optional(),
+  jobId: z.string().optional(),
+  job: NormalizedJobResultSchema.optional(),
+});
+
+export type SelectOpportunityInput = z.infer<typeof SelectOpportunityInputSchema>;
+
 export const SessionDocumentSchema = z.object({
   session_id: z.string().uuid(),
   stack: z.array(z.string()),
@@ -52,6 +63,14 @@ export const SessionDocumentSchema = z.object({
   expires_at: z.string().datetime(),
   current_job_id: z.string().uuid().optional(),
   snapshot_id: z.string().nullable().optional(),
+  selected_company_id: z.string().optional(),
+  selectedCompanyId: z.string().optional(),
+  selected_job_id: z.string().optional(),
+  selectedJobId: z.string().optional(),
+  selected_job: NormalizedJobResultSchema.optional(),
+  selectedJob: NormalizedJobResultSchema.optional(),
+  data_mode: z.enum(['demo', 'live']).optional(),
+  dataMode: z.enum(['demo', 'live']).optional(),
   research_results: z.array(NormalizedJobResultSchema).optional(),
   discovered_issues: z.array(NormalizedIssueSchema).optional(),
   health: CompactHealthRecordSchema.optional(),
@@ -76,6 +95,14 @@ export const SessionStatusResponseSchema = z.object({
   is_expired: z.boolean(),
   current_job: CurrentJobInfoSchema.optional(),
   snapshot_id: z.string().nullable().optional(),
+  selected_company_id: z.string().optional(),
+  selectedCompanyId: z.string().optional(),
+  selected_job_id: z.string().optional(),
+  selectedJobId: z.string().optional(),
+  selected_job: NormalizedJobResultSchema.optional(),
+  selectedJob: NormalizedJobResultSchema.optional(),
+  data_mode: z.enum(['demo', 'live']).optional(),
+  dataMode: z.enum(['demo', 'live']).optional(),
   message: z.string().optional(),
   research_results: z.array(NormalizedJobResultSchema).optional(),
   discovered_issues: z.array(NormalizedIssueSchema).optional(),
