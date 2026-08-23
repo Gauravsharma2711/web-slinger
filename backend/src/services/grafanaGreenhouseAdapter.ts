@@ -38,6 +38,7 @@ export class GrafanaGreenhouseAdapter implements ResearchAdapter {
     _onSnapshotTriggered?: (snapshotId: string) => Promise<void>
   ): Promise<ResearchAdapterResult> {
     const startTime = Date.now();
+    const nowMs = Date.now();
     const nowIso = new Date().toISOString();
 
     let rawJobs: GreenhouseJobRaw[] = [];
@@ -88,7 +89,7 @@ export class GrafanaGreenhouseAdapter implements ResearchAdapter {
       };
 
       // Check for valid cache entry
-      if (cachedGreenhouseJobs && cachedGreenhouseJobs.jobs.length > 0) {
+      if (cachedGreenhouseJobs && nowMs - cachedGreenhouseJobs.timestamp < CACHE_TTL_MS && cachedGreenhouseJobs.jobs.length > 0) {
         rawJobs = cachedGreenhouseJobs.jobs;
         isCached = true;
         retrievalTimeIso = cachedGreenhouseJobs.retrievedAtIso;
@@ -160,8 +161,7 @@ export class GrafanaGreenhouseAdapter implements ResearchAdapter {
     const { normalized, exactMatchCount, fallbackCount, state } = this.normalizeAndRankJobs(
       rawJobs,
       stack,
-      retrievalTimeIso,
-      isCached
+      retrievalTimeIso
     );
 
     console.log(
@@ -198,8 +198,7 @@ export class GrafanaGreenhouseAdapter implements ResearchAdapter {
   private normalizeAndRankJobs(
     rawJobs: GreenhouseJobRaw[],
     stack: string[],
-    retrievalTimeIso: string,
-    isCached: boolean
+    retrievalTimeIso: string
   ): {
     normalized: NormalizedJobResult[];
     exactMatchCount: number;
@@ -249,6 +248,7 @@ export class GrafanaGreenhouseAdapter implements ResearchAdapter {
         career_url: 'https://grafana.com/about/careers/',
         collected_at: retrievalTimeIso,
         listing_date: job.updated_at || job.first_published || null,
+        job_description_excerpt: null,
         is_fixture: false,
         isFixture: false,
         score,

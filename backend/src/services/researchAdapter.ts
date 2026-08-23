@@ -4,7 +4,7 @@ import {
   CompactHealthRecord,
   getCuratedDemoFixtures,
 } from '@web-slinger/shared';
-import { config, brightDataConfig } from '../config.js';
+import { config } from '../config.js';
 import { BrightDataClient } from './brightDataClient.js';
 import { processAndRankJobRecords, selectDiverseTopJobs } from './jobTriage.js';
 

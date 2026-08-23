@@ -16,7 +16,8 @@ import {
   FinalReadinessResponse,
 } from '@web-slinger/shared';
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE =
+  (import.meta as unknown as { env?: { VITE_API_BASE?: string } }).env?.VITE_API_BASE || '/api';
 
 export async function createSession(input: CreateSessionInput): Promise<SessionDocument> {
   const res = await fetch(`${API_BASE}/sessions`, {

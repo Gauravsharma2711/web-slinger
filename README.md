@@ -10,6 +10,9 @@
 [![Google Cloud Vertex AI](https://img.shields.io/badge/Google_Cloud-Vertex_AI-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/vertex-ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+🌐 **Live Application**: [https://web-slinger-506212.web.app](https://web-slinger-506212.web.app)  
+⚡ **API Health Status**: [https://web-slinger-506212.web.app/api/healthz](https://web-slinger-506212.web.app/api/healthz)
+
 ---
 
 <!-- Add demo GIF here before submission -->
@@ -316,10 +319,10 @@ Web-Slinger supports two distinct operational modes:
 
 ## Deployment Architecture
 
-- **Frontend**: Designed for deployment on **Firebase Hosting** with global CDN caching.
-- **Backend**: Containerized Express application targeted for **Google Cloud Run** with autoscaling.
-- **Persistence**: Hybrid **Google Cloud Firestore** storage for distributed session tracking, with memory-backed fallback for local workflows.
-- **AI Acceleration**: Managed **Vertex AI Gemini 3.7 Flash** for sub-second, source-grounded context brief and patch generation.
+- **Frontend**: Deployed on **Firebase Hosting** with global CDN caching: [https://web-slinger-506212.web.app](https://web-slinger-506212.web.app)
+- **Backend**: Containerized Express application deployed to **Google Cloud Run** (`us-central1`): [https://web-slinger-api-gvjkcjg3fq-uc.a.run.app](https://web-slinger-api-gvjkcjg3fq-uc.a.run.app)
+- **Persistence**: **Google Cloud Firestore** storage (`web-slinger-506212`) for distributed session tracking.
+- **AI Acceleration**: Managed **Vertex AI Gemini 3.7 Flash** for source-grounded context brief and patch generation.
 
 ---
 
